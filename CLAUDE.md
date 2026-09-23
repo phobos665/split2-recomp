@@ -1,0 +1,130 @@
+# split2-recomp — working context
+
+TimeSplitters 2 (Xbox), statically recompiled on the xboxrecomp toolkit, which
+is the submodule in `xboxrecomp/`. This repository exists to make **this one
+game** better than it was on the console. The toolkit exists to make every
+game work. Most of the judgement in this repo is deciding which of the two a
+change belongs in.
+
+Read `xboxrecomp/CLAUDE.md` too. It holds the toolkit's architecture, its debug
+table (`stderr shows` → cause) and its switches. This file does not repeat them.
+
+---
+
+## Toolkit or here?
+
+The rule: **if a change contains no fact about TimeSplitters 2, it belongs in
+xboxrecomp.** A new D3D8 replacement, a kernel call, a lifter fix, a renderer
+feature and a settings option are all toolkit work, even when TS2 is the game
+that found them. Here: TS2's overrides, seeds, symbols, per-game patches and
+defaults, and tools for its own formats.
+
+`xboxrecomp/docs/technical/xbox-game-enhancements.md` makes this split for each
+planned enhancement. TS2's share of it:
+
+| Enhancement | TS2's part |
+| --- | --- |
+| Widescreen | The game has no 16:9 mode. The projection is vertex constant register 60 (`RECOMP_HOR_PLUS_REG`). Still to do: keep the HUD and menus at 4:3, which means telling HUD draws from full-screen ones in this game |
+| Frame rate above 60 | Find what steps per frame or per vblank (physics, animation, timers) and make it time-based, or keep logic at 60 and present above it |
+| Online play | TS2 has system link (LAN) and no Xbox Live. Once the toolkit tunnels system link, little should be left to do here |
+| Mods | Assets are in `data/*.pak`. Naming dumped textures by pak entry is this repo's job; the dump and replace is the toolkit's |
+| Cutscene skip | In-engine cutscenes: find where they start and whether the game already has a skip |
+
+**Working on the toolkit from here:** make the change in `xboxrecomp/` on a
+branch, commit and push it **there** (`origin` is phobos665/xboxrecomp), then
+commit the new submodule pin here. Never leave this repo pinned to a toolkit
+commit that exists only on this machine. The pin is currently on
+`feat/outrun2`, which holds the movie and XGRA work that is not on `main` yet.
+
+---
+
+## The title
+
+| | |
+| --- | --- |
+| Title ID | `4553000A` |
+| Release | PAL, certificate region 0x4, version 2. `default.xbe` SHA-1 `2809eb147385723eaa90c425be89ee4db033fc5a` |
+| XDK | 4721, plain D3D8 (not LTCG) |
+| Entry point | `0x001CF3C9` |
+| Saves | `game/UDATA/4553000a/` |
+| Settings file | `%APPDATA%\xboxrecomp\titles\4553000A.conf` |
+
+`config/seeds.json` and `config/xdk_symbols.json` are addresses in that exact
+XBE. Another region needs its own copies.
+
+State (Sep 2026): the front end and story mode play (Siberia), 5 ms a frame,
+60 fps under the adaptive cap. There are no unresolved indirect calls. It has
+no XMV movies. The toolkit's history with this game is in
+`xboxrecomp/docs/technical/second-title-bringup.md`,
+`ts2-performance-plan.md`, `resolution-and-framerate.md` and
+`modding-models-textures.md`.
+
+One open issue: in one run out of two or three, the game has exited with code
+`0xFFFFFFFF` with no fault and no kernel call. `[EXIT]` lines in the log (the
+toolkit's exit trace) name the caller if it happens again.
+
+---
+
+## Layout
+
+```text
+CMakeLists.txt          the executable and the launcher, on top of xboxrecomp
+scripts/build.py        lift (first time or --relift), then configure and build
+src/main.c              the host entry point, from xboxrecomp/templates/new-game
+src/recomp_manual.c     hand-written overrides of lifted functions
+config/seeds.json       function entry points discovery cannot see
+config/xdk_symbols.json XDK function names in this XBE (for the D3D8 replacements)
+game/                   the disc, supplied by the user        (ignored)
+src/recomp/gen/         the lifted C, i.e. game code           (ignored)
+.pipeline/              disasm, func_id and recomp stage output (ignored)
+build/                  CMake build; the exe is build/Release/split2_recomp.exe
+```
+
+**Never commit `game/` or `src/recomp/`, and never paste lifted code into a
+committed file.** Lifted C is the game's code. Addresses, names and hand-written
+overrides are fine.
+
+---
+
+## Commands
+
+```bash
+py -3 scripts/build.py                        # lift if needed, then build
+py -3 scripts/build.py --relift               # after changing seeds, symbols, recomp_manual.c or the toolkit
+py -3 scripts/build.py --relift --from disasm # new seeds are applied by the disassembler, so start there
+cmake --build build --config Release          # recompile only
+```
+
+A run for testing. **Always muted** (`RECOMP_MUTE=1`), always time-limited. The
+input script walks a fresh save to Siberia:
+
+```bash
+cd build/Release
+RECOMP_MUTE=1 RECOMP_FPS=5 \
+RECOMP_INPUT_SEQ="12000:start,16000:start,20000:start,24000:start,28000:a,34000:a,40000:a,46000:a,52000:a,58000:a,64000:a,70000:a" \
+timeout 90 ./split2_recomp.exe 2> run.log
+```
+
+An existing save changes the menu path ("overwrite?"), so the script only lands
+on a fresh save. Move `game/UDATA/4553000a` aside for a scripted run, and put it
+back afterwards: it may be the user's.
+
+`xboxrecomp/scripts/run_and_report.py <exe> --seconds 60` runs and summarises a
+run in the same way. See the toolkit's CLAUDE.md for frame dumps
+(`RECOMP_HLE_D3D8_DUMP*`), captures (F11, `RECOMP_D3D8_CAPTURE`) and the
+watchpoint switches.
+
+---
+
+## Overrides and seeds
+
+- `src/recomp_manual.c` is the one place a lifted function is replaced. The
+  lifter reads it (`--exclude-manual`) and does not generate what it defines, so
+  a second override file gives duplicate symbols. **Write the reason beside every
+  override when you add it.**
+- A new unresolved `[ICALL]` target becomes a seed:
+  `py -3 -m tools.seed_from_log <log> <xbe> --functions ../.pipeline/disasm/functions.json --seeds ../config/seeds.json`,
+  run from `xboxrecomp/`. Then rebuild with `--relift --from disasm`.
+- `src/main.c` is a copy of the toolkit template with three defines changed
+  (entry point, game paths). When the template changes upstream, bring the change
+  across by hand and keep those three defines.
