@@ -449,7 +449,9 @@ void recomp_icall_not_code_log(uint32_t va, uint32_t saved_esp)
  * Only this camera: the other callers of sub_000E6E30 are the front end's
  * 3D (character select and the like), which is kept at 4:3.
  */
-extern float xbox_D3D8ClaimHorPlus(void);   /* xboxrecomp src/d3d/d3d8_xbox.h */
+/* xboxrecomp src/d3d/d3d8_xbox.h */
+extern float xbox_D3D8ClaimHorPlus(void);
+extern void  xbox_D3D8SetWideFrames(int wide);
 
 #define TS2_MEMF(a) (*(volatile float *)((uintptr_t)(uint32_t)(a) + g_xbox_mem_offset))
 
@@ -468,6 +470,9 @@ static float ts2_camera_widen(void)
     return widen;
 }
 
+/* What the frame now being drawn has run, for the choice below. */
+static int g_ts2_frame_camera, g_ts2_frame_front_end;
+
 extern void sub_00032DC0_gen(void);
 void sub_00032DC0(void)
 {
@@ -476,4 +481,44 @@ void sub_00032DC0(void)
     if (widen != 1.0f)
         TS2_MEMF(g_esp + 0x0C) *= widen;   /* [esp] is the return address */
     sub_00032DC0_gen();
+    g_ts2_frame_camera = 1;                /* see sub_001CC530 below */
+}
+
+/*
+ * Widescreen in the levels, 4:3 in the front end. The front end is laid
+ * out for 4:3 and mixes 3D backdrops with 2D panels, and no placement of
+ * its pieces in a 16:9 picture is right (they judder between stretched and
+ * squeezed as they animate). So it is shown at 4:3 between bars, as the
+ * console drew it, and the levels and their cutscenes at 16:9.
+ *
+ * Which screen a frame belongs to, traced frame by frame through a run:
+ *
+ *   menus, story level select   in-game camera + sub_0009F1C0
+ *   in-engine cutscenes         in-game camera
+ *   playing                     in-game camera
+ *   loading screens             neither
+ *
+ * sub_0009F1C0 sets up the front end's own 3D scene (it builds its camera
+ * through sub_00095CE0). The front end draws its backdrop through the
+ * in-game camera as well, hence the pair.
+ *
+ * sub_001CC530 is the game's once-a-frame present (it calls
+ * D3DDevice_Swap). After a frame is presented, the next is given the shape
+ * the finished one called for: a frame's own draws are not all in yet
+ * when it starts, and a screen lasts many frames, so the only cost is one
+ * frame at each change, which falls on a fade or a load.
+ */
+extern void sub_0009F1C0_gen(void);
+void sub_0009F1C0(void)
+{
+    g_ts2_frame_front_end = 1;
+    sub_0009F1C0_gen();
+}
+
+extern void sub_001CC530_gen(void);
+void sub_001CC530(void)
+{
+    sub_001CC530_gen();
+    xbox_D3D8SetWideFrames(g_ts2_frame_camera && !g_ts2_frame_front_end);
+    g_ts2_frame_camera = g_ts2_frame_front_end = 0;
 }
