@@ -428,3 +428,52 @@ void recomp_icall_not_code_log(uint32_t va, uint32_t saved_esp)
     fflush(stderr);
 }
 
+
+/* ── TimeSplitters 2: the widescreen camera ───────────────── */
+
+/*
+ * TimeSplitters 2 has no 16:9 mode. The toolkit's Hor+ (RECOMP_HOR_PLUS)
+ * widens it by scaling the projection register as it is uploaded, but the
+ * game culls against its own numbers: past the old 4:3 edges, and through
+ * doorways, whole pieces of the level were missing and the sky showed
+ * through the walls.
+ *
+ * The in-game camera is set up in one place, sub_00032DC0(near, far,
+ * aspect, fov_degrees). It turns the aspect into the screen's
+ * (aspect * width / height), builds the projection from it with
+ * sub_000E6E30(out, aspect, fovy, near, far), and stores tan(fov/2) at
+ * camera+0x31C and aspect * tan(fov/2) -- the horizontal half-width the
+ * culling uses -- at camera+0x320. Widening the aspect argument on the
+ * way in widens both, so what is drawn and what is kept agree.
+ *
+ * Only this camera: the other callers of sub_000E6E30 are the front end's
+ * 3D (character select and the like), which is kept at 4:3.
+ */
+extern float xbox_D3D8ClaimHorPlus(void);   /* xboxrecomp src/d3d/d3d8_xbox.h */
+
+#define TS2_MEMF(a) (*(volatile float *)((uintptr_t)(uint32_t)(a) + g_xbox_mem_offset))
+
+/* The factor to multiply the camera's aspect by: 1 when no wider view is
+ * wanted, 4/3 for the usual Hor+ 0.75. Claiming it stops the toolkit
+ * scaling the register as well, which would widen the view twice. */
+static float ts2_camera_widen(void)
+{
+    static float widen;
+
+    if (widen == 0.0f) {
+        float factor = xbox_D3D8ClaimHorPlus();
+
+        widen = (factor > 0.0f && factor != 1.0f) ? 1.0f / factor : 1.0f;
+    }
+    return widen;
+}
+
+extern void sub_00032DC0_gen(void);
+void sub_00032DC0(void)
+{
+    float widen = ts2_camera_widen();
+
+    if (widen != 1.0f)
+        TS2_MEMF(g_esp + 0x0C) *= widen;   /* [esp] is the return address */
+    sub_00032DC0_gen();
+}
