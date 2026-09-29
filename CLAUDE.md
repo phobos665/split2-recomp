@@ -33,8 +33,9 @@ planned enhancement. TS2's share of it:
 **Working on the toolkit from here:** make the change in `xboxrecomp/` on a
 branch, commit and push it **there** (`origin` is phobos665/xboxrecomp), then
 commit the new submodule pin here. Never leave this repo pinned to a toolkit
-commit that exists only on this machine. The pin is currently on
-`feat/outrun2`, which holds the movie and XGRA work that is not on `main` yet.
+commit that exists only on this machine. `main` pins the toolkit's `main`
+(which has absorbed `feat/outrun2`'s movie and XGRA work); feature branches here
+pin the toolkit branch of the same work.
 
 ---
 
