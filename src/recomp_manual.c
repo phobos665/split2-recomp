@@ -570,9 +570,11 @@ void sub_001CC530(void)
  *   - k_ts2_ui_places below says where each known site goes; unknown ones
  *     are left to the renderer (AUTO), exactly as before;
  *   - a reservation whose placement differs from the batch's flushes the
- *     batch first, and the flush hands the batch's placement to the renderer
- *     around the draw and resets it after, so a draw that never went through
- *     the batch (the glow passes, a movie) cannot inherit a menu's placement.
+ *     batch first; the renderer is given the batch's placement as soon as
+ *     anything is queued (the engine draws the batch by more than one way),
+ *     and sub_001C9CDF resets it once the batch is drawn, so a draw that
+ *     never went through the batch (the glow passes, a movie) does not
+ *     inherit a menu's placement.
  *
  * All wrapping, not replacing (manual_scan.py: extern ..._gen), so the lifted
  * bodies still do the work. Without widescreen nothing here changes a draw.
@@ -587,7 +589,8 @@ void sub_001CC530(void)
  *   RECOMP_TS2_UI_DEFAULT=<p>   placement for sites not in the table (auto)
  */
 
-enum { TS2_UI_AUTO = 0, TS2_UI_STRETCH, TS2_UI_CENTRE, TS2_UI_LEFT, TS2_UI_RIGHT };
+enum { TS2_UI_AUTO = 0, TS2_UI_STRETCH, TS2_UI_CENTRE, TS2_UI_LEFT, TS2_UI_RIGHT,
+       TS2_UI_SIDE };
 
 /* xboxrecomp src/hle/hle_d3d8_record.h: xbox_D3D8SetTwoDPlacement, recorded in
  * frame captures so a capture replays with these placements. Same values
@@ -645,6 +648,43 @@ static const Ts2UiPlace k_ts2_ui_places[] = {
     { 0x00088FD3, TS2_UI_CENTRE }, { 0x000890BB, TS2_UI_CENTRE },
     { 0x000EFE57, TS2_UI_CENTRE }, { 0x00089D55, TS2_UI_CENTRE },
     { 0x001A213B, TS2_UI_CENTRE }, { 0x00089606, TS2_UI_CENTRE },
+
+    /* Arcade screens: the hex backdrop, the level list's pictures, the
+     * character select (portraits, name, stats, the picture of the one
+     * chosen), the panel's corners and scroll arrow, and the row of
+     * player figures at the bottom right, opposite the button hints. */
+    { 0x000A5085, TS2_UI_STRETCH },
+    { 0x0008A402, TS2_UI_CENTRE }, { 0x0008F837, TS2_UI_CENTRE },
+    { 0x0008F9B5, TS2_UI_CENTRE }, { 0x0008FA26, TS2_UI_CENTRE },
+    { 0x0008FC23, TS2_UI_CENTRE }, { 0x001B747A, TS2_UI_CENTRE },
+    { 0x001B74C3, TS2_UI_CENTRE }, { 0x001B74FF, TS2_UI_CENTRE },
+    { 0x000EE82A, TS2_UI_CENTRE }, { 0x000EE846, TS2_UI_CENTRE },
+    { 0x000F065F, TS2_UI_CENTRE },
+    { 0x0008E98D, TS2_UI_RIGHT },
+
+    /* In-game HUD, from an Arcade match: the rank badge in the top left
+     * corner, the radar in the top right, each hand's ammo at its own
+     * bottom corner (one piece of code draws both, hence SIDE), the kill
+     * message and the crosshair in the middle. The health and armour arcs
+     * are one ellipse framing the view, so it spans the picture. */
+    { 0x000BCF3E, TS2_UI_LEFT },   { 0x000BCFAE, TS2_UI_LEFT },
+    { 0x000BD129, TS2_UI_LEFT },
+    { 0x000BFDBE, TS2_UI_RIGHT },  { 0x000BFFD4, TS2_UI_RIGHT },
+    { 0x000C0033, TS2_UI_RIGHT },  { 0x000C0274, TS2_UI_RIGHT },
+    { 0x000C0324, TS2_UI_RIGHT },  { 0x000C043F, TS2_UI_RIGHT },
+    { 0x000BE66C, TS2_UI_SIDE },   { 0x000BEE57, TS2_UI_SIDE },
+    /* The dark backing drawn under each ammo number, from its own call
+     * site: left to the width guess it stayed in the 4:3 layout, beside
+     * the bars, while the number went to the corner. */
+    { 0x000BE63F, TS2_UI_SIDE },
+    { 0x000BC31C, TS2_UI_CENTRE }, { 0x00058670, TS2_UI_CENTRE },
+    { 0x000C933F, TS2_UI_STRETCH },
+    /* Sprites the game places in the world and projects to the screen
+     * itself (the brazier's flame, muzzle flashes): they were projected
+     * through the widened camera, so they are already where the 3D is and
+     * squeezing them would pull them off it. */
+    { 0x001C021F, TS2_UI_STRETCH }, { 0x001BEBBE, TS2_UI_STRETCH },
+    { 0x001BEBF4, TS2_UI_STRETCH }, { 0x001BED57, TS2_UI_STRETCH },
     { 0, TS2_UI_AUTO }
 };
 
@@ -656,6 +696,23 @@ static int        g_ts2_ui_mode = -1;   /* 0 off, 1 placing, 2 placing and taggi
 /* The batch: what is queued in it came from this site, with this placement. */
 static int      g_ts2_batch_place = TS2_UI_AUTO;
 static uint32_t g_ts2_batch_site;
+
+/* The placement the renderer has now, so it is only told of changes (each
+ * one is a chunk in a frame capture). */
+static int      g_ts2_host_place = -1;
+static uint32_t g_ts2_host_tag;
+/* Set while a reservation flushes ahead of itself: the flush must not reset
+ * the renderer's placement then (sub_001C9265). */
+static int      g_ts2_keep_host;
+
+static void ts2_ui_host_place(int place, uint32_t tag)
+{
+    if (place == g_ts2_host_place && tag == g_ts2_host_tag)
+        return;
+    g_ts2_host_place = place;
+    g_ts2_host_tag = tag;
+    host_SetTwoDPlacement(place, tag);
+}
 
 /* The callers of the wrapped drawing functions now running, outermost first. */
 static RECOMP_MANUAL_TLS uint32_t g_ts2_chain[8];
@@ -669,6 +726,7 @@ static int ts2_ui_parse_place(const char *s)
     if (!strncmp(s, "centre", 6) || !strncmp(s, "center", 6)) return TS2_UI_CENTRE;
     if (!strncmp(s, "left", 4)) return TS2_UI_LEFT;
     if (!strncmp(s, "right", 5)) return TS2_UI_RIGHT;
+    if (!strncmp(s, "side", 4)) return TS2_UI_SIDE;
     return TS2_UI_AUTO;
 }
 
@@ -759,15 +817,39 @@ void sub_001C9265(void)
         uint32_t site = g_ts2_depth ? g_ts2_chain[0] : leaf;
         int place = ts2_ui_place_for(site);
 
+        int change = place != g_ts2_batch_place || place == TS2_UI_SIDE ||
+                     (g_ts2_ui_mode == 2 && site != g_ts2_batch_site);
+
         if (g_ts2_ui_mode == 2)
             ts2_ui_note_site(site, leaf);
-        if (place != g_ts2_batch_place || (g_ts2_ui_mode == 2 && site != g_ts2_batch_site)) {
+        if (change) {
             /* The queue holds another site's pieces: draw them under their
-             * own placement before this one's join it. */
+             * own placement before this one's join it. A SIDE site's pieces
+             * are drawn one by one, since the renderer pins each draw to the
+             * edge it is nearer and one draw holding both hands' ammo would
+             * be pinned to neither. The renderer keeps the old placement
+             * through the reservation below (see there). */
+            g_ts2_keep_host = 1;
             ts2_ui_flush();
+            g_ts2_keep_host = 0;
+        }
+        /* The engine keeps more than one batch (by format, it seems), and
+         * sub_001C9CDF does not always draw the one that holds the last
+         * pieces: the reservation itself draws it, when the next piece does
+         * not fit it, by its own way (sub_001C967C calls the draw). So the
+         * renderer holds the old batch's placement until that has happened,
+         * and takes the new one after, for the pieces now queued -- whose
+         * batch may be drawn by either way. Setting the new one first put
+         * the right hand's ammo bars, the last piece before the next site,
+         * under that site's placement and left them in the 4:3 layout. */
+        sub_001C9265_gen();
+        if (change) {
             g_ts2_batch_place = place;
             g_ts2_batch_site = site;
         }
+        ts2_ui_host_place(g_ts2_batch_place,
+                          g_ts2_ui_mode == 2 ? g_ts2_batch_site : 0);
+        return;
     }
     sub_001C9265_gen();
 }
@@ -779,10 +861,14 @@ void sub_001C9CDF(void)
         sub_001C9CDF_gen();
         return;
     }
-    host_SetTwoDPlacement(g_ts2_batch_place,
-                              g_ts2_ui_mode == 2 ? g_ts2_batch_site : 0);
+    ts2_ui_host_place(g_ts2_batch_place, g_ts2_ui_mode == 2 ? g_ts2_batch_site : 0);
     sub_001C9CDF_gen();
-    host_SetTwoDPlacement(TS2_UI_AUTO, 0);
+    /* The batch is empty again: a draw that never went through it (a glow
+     * pass, a movie) must not inherit its placement -- unless a reservation
+     * is flushing ahead of itself, when another batch may still be drawn
+     * under this placement (sub_001C9265). */
+    if (!g_ts2_keep_host)
+        ts2_ui_host_place(TS2_UI_AUTO, 0);
 }
 
 /* The engine's shared drawing functions: the helpers that reserve vertices
