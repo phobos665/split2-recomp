@@ -570,9 +570,11 @@ void sub_001CC530(void)
  *   - k_ts2_ui_places below says where each known site goes; unknown ones
  *     are left to the renderer (AUTO), exactly as before;
  *   - a reservation whose placement differs from the batch's flushes the
- *     batch first, and the flush hands the batch's placement to the renderer
- *     around the draw and resets it after, so a draw that never went through
- *     the batch (the glow passes, a movie) cannot inherit a menu's placement.
+ *     batch first; the renderer is given the batch's placement as soon as
+ *     anything is queued (the engine draws the batch by more than one way),
+ *     and sub_001C9CDF resets it once the batch is drawn, so a draw that
+ *     never went through the batch (the glow passes, a movie) does not
+ *     inherit a menu's placement.
  *
  * All wrapping, not replacing (manual_scan.py: extern ..._gen), so the lifted
  * bodies still do the work. Without widescreen nothing here changes a draw.
@@ -671,6 +673,10 @@ static const Ts2UiPlace k_ts2_ui_places[] = {
     { 0x000C0033, TS2_UI_RIGHT },  { 0x000C0274, TS2_UI_RIGHT },
     { 0x000C0324, TS2_UI_RIGHT },  { 0x000C043F, TS2_UI_RIGHT },
     { 0x000BE66C, TS2_UI_SIDE },   { 0x000BEE57, TS2_UI_SIDE },
+    /* The dark backing drawn under each ammo number, from its own call
+     * site: left to the width guess it stayed in the 4:3 layout, beside
+     * the bars, while the number went to the corner. */
+    { 0x000BE63F, TS2_UI_SIDE },
     { 0x000BC31C, TS2_UI_CENTRE }, { 0x00058670, TS2_UI_CENTRE },
     { 0x000C933F, TS2_UI_STRETCH },
     /* Sprites the game places in the world and projects to the screen
@@ -690,6 +696,20 @@ static int        g_ts2_ui_mode = -1;   /* 0 off, 1 placing, 2 placing and taggi
 /* The batch: what is queued in it came from this site, with this placement. */
 static int      g_ts2_batch_place = TS2_UI_AUTO;
 static uint32_t g_ts2_batch_site;
+
+/* The placement the renderer has now, so it is only told of changes (each
+ * one is a chunk in a frame capture). */
+static int      g_ts2_host_place = -1;
+static uint32_t g_ts2_host_tag;
+
+static void ts2_ui_host_place(int place, uint32_t tag)
+{
+    if (place == g_ts2_host_place && tag == g_ts2_host_tag)
+        return;
+    g_ts2_host_place = place;
+    g_ts2_host_tag = tag;
+    host_SetTwoDPlacement(place, tag);
+}
 
 /* The callers of the wrapped drawing functions now running, outermost first. */
 static RECOMP_MANUAL_TLS uint32_t g_ts2_chain[8];
@@ -807,6 +827,14 @@ void sub_001C9265(void)
             g_ts2_batch_place = place;
             g_ts2_batch_site = site;
         }
+        /* The renderer holds the batch's placement from the moment anything
+         * is queued in it, not only around sub_001C9CDF: the engine also
+         * draws the batch by other ways (sub_001C967C calls the draw
+         * itself), and a batch drawn that way came out under AUTO -- the
+         * ammo's bars and dark backing stayed in the 4:3 layout while the
+         * numbers went to the corners. */
+        ts2_ui_host_place(g_ts2_batch_place,
+                          g_ts2_ui_mode == 2 ? g_ts2_batch_site : 0);
     }
     sub_001C9265_gen();
 }
@@ -818,10 +846,11 @@ void sub_001C9CDF(void)
         sub_001C9CDF_gen();
         return;
     }
-    host_SetTwoDPlacement(g_ts2_batch_place,
-                              g_ts2_ui_mode == 2 ? g_ts2_batch_site : 0);
+    ts2_ui_host_place(g_ts2_batch_place, g_ts2_ui_mode == 2 ? g_ts2_batch_site : 0);
     sub_001C9CDF_gen();
-    host_SetTwoDPlacement(TS2_UI_AUTO, 0);
+    /* The batch is empty again: a draw that never went through it (a glow
+     * pass, a movie) must not inherit its placement. */
+    ts2_ui_host_place(TS2_UI_AUTO, 0);
 }
 
 /* The engine's shared drawing functions: the helpers that reserve vertices
