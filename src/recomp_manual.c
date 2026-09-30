@@ -449,7 +449,9 @@ void recomp_icall_not_code_log(uint32_t va, uint32_t saved_esp)
  * Only this camera: the other callers of sub_000E6E30 are the front end's
  * 3D (character select and the like), which is kept at 4:3.
  */
-extern float xbox_D3D8ClaimHorPlus(void);   /* xboxrecomp src/d3d/d3d8_xbox.h */
+/* xboxrecomp src/d3d/d3d8_xbox.h */
+extern float xbox_D3D8ClaimHorPlus(void);
+extern void  xbox_D3D8SetWideFrames(int wide);
 
 #define TS2_MEMF(a) (*(volatile float *)((uintptr_t)(uint32_t)(a) + g_xbox_mem_offset))
 
@@ -468,6 +470,9 @@ static float ts2_camera_widen(void)
     return widen;
 }
 
+/* What the frame now being drawn has run, for the choice below. */
+static int g_ts2_frame_camera, g_ts2_frame_front_end;
+
 extern void sub_00032DC0_gen(void);
 void sub_00032DC0(void)
 {
@@ -476,4 +481,381 @@ void sub_00032DC0(void)
     if (widen != 1.0f)
         TS2_MEMF(g_esp + 0x0C) *= widen;   /* [esp] is the return address */
     sub_00032DC0_gen();
+    g_ts2_frame_camera = 1;                /* see sub_001CC530 below */
 }
+
+/*
+ * The front end at 4:3, if asked (RECOMP_TS2_MENUS=43 below). It is laid
+ * out for 4:3 and mixes 3D backdrops with 2D panels; left to the
+ * renderer's width guess its pieces juddered between stretched and
+ * squeezed as they animated. The placement table below fixes that, and
+ * this is the fallback: the front end shown at 4:3 between bars, as the
+ * console drew it, and the levels and their cutscenes at 16:9.
+ *
+ * Which screen a frame belongs to, traced frame by frame through a run:
+ *
+ *   menus, story level select   in-game camera + sub_0009F1C0
+ *   in-engine cutscenes         in-game camera
+ *   playing                     in-game camera
+ *   loading screens             neither
+ *
+ * sub_0009F1C0 sets up the front end's own 3D scene (it builds its camera
+ * through sub_00095CE0). The front end draws its backdrop through the
+ * in-game camera as well, hence the pair.
+ *
+ * sub_001CC530 is the game's once-a-frame present (it calls
+ * D3DDevice_Swap). After a frame is presented, the next is given the shape
+ * the finished one called for: a frame's own draws are not all in yet
+ * when it starts, and a screen lasts many frames, so the only cost is one
+ * frame at each change, which falls on a fade or a load.
+ */
+extern void sub_0009F1C0_gen(void);
+void sub_0009F1C0(void)
+{
+    g_ts2_frame_front_end = 1;
+    sub_0009F1C0_gen();
+}
+
+/*
+ * RECOMP_TS2_MENUS / ts2_menus = wide (the default) lays the front end out
+ * for 16:9 with the placement table below, so every screen is widescreen;
+ * 43 keeps the front end and the loading screens at 4:3 between bars, as
+ * above.
+ */
+extern const char *recomp_config_lookup(const char *env_name, const char *key);
+
+static int ts2_menus_wide(void)
+{
+    static int wide = -1;
+
+    if (wide < 0) {
+        const char *v = recomp_config_lookup("RECOMP_TS2_MENUS", "ts2_menus");
+
+        wide = !(v && (!strcmp(v, "43") || !strcmp(v, "4:3")));
+        fprintf(stderr, "[TS2-UI] menus %s (RECOMP_TS2_MENUS=wide|43)\n",
+                wide ? "laid out for 16:9" : "at 4:3");
+    }
+    return wide;
+}
+
+extern void sub_001CC530_gen(void);
+void sub_001CC530(void)
+{
+    sub_001CC530_gen();
+    xbox_D3D8SetWideFrames(ts2_menus_wide() ||
+                           (g_ts2_frame_camera && !g_ts2_frame_front_end));
+    g_ts2_frame_camera = g_ts2_frame_front_end = 0;
+}
+
+/* ── TimeSplitters 2: where each piece of 2D goes in widescreen ── */
+
+/*
+ * TimeSplitters 2 has no 16:9 mode. Its 2D -- menus, HUD, text, backdrops --
+ * is positioned on the CPU in 640x480 pixels, and in widescreen the renderer
+ * squeezes it back to 4:3 so the 16:9 stretch leaves it in proportion. Which
+ * pieces should instead span the picture (a backdrop, a fade) or sit at an
+ * edge (a HUD corner) the renderer can only guess from the vertices, and the
+ * guess changes as things animate: the menu header juddered between the two.
+ *
+ * The code that drew a piece says what it is, the same way every frame. All
+ * of the game's 2D reaches the GPU through one call, sub_001C9265(primitive,
+ * format, ?, count), which reserves vertices in the engine's batch for the
+ * caller to fill; sub_001C9CDF flushes the batch to DrawVertices. So:
+ *
+ *   - the reservation is wrapped, and reads its caller from the guest stack
+ *     (a lifted call pushes the real return address first);
+ *   - the engine's shared drawing functions above it are wrapped too, so a
+ *     piece drawn through one is credited to the UI code that called it --
+ *     the *site* is the caller of the outermost wrapped function;
+ *   - k_ts2_ui_places below says where each known site goes; unknown ones
+ *     are left to the renderer (AUTO), exactly as before;
+ *   - a reservation whose placement differs from the batch's flushes the
+ *     batch first, and the flush hands the batch's placement to the renderer
+ *     around the draw and resets it after, so a draw that never went through
+ *     the batch (the glow passes, a movie) cannot inherit a menu's placement.
+ *
+ * All wrapping, not replacing (manual_scan.py: extern ..._gen), so the lifted
+ * bodies still do the work. Without widescreen nothing here changes a draw.
+ *
+ *   RECOMP_TS2_UI_SITES=1       flush at every site change and tag each batch
+ *                               with its site, and print each site's chain
+ *                               the first time it draws; with the renderer's
+ *                               RECOMP_D3D8_2D_TAGS=1 that gives each site's
+ *                               extent. How the table is built.
+ *   RECOMP_TS2_UI_PLACE=<list>  site=placement pairs, comma separated, over
+ *                               the table: 0008A0C1=stretch,000AB123=left
+ *   RECOMP_TS2_UI_DEFAULT=<p>   placement for sites not in the table (auto)
+ */
+
+enum { TS2_UI_AUTO = 0, TS2_UI_STRETCH, TS2_UI_CENTRE, TS2_UI_LEFT, TS2_UI_RIGHT };
+
+/* xboxrecomp src/hle/hle_d3d8_record.h: xbox_D3D8SetTwoDPlacement, recorded in
+ * frame captures so a capture replays with these placements. Same values
+ * as XBOX_D3D8_2D_*. */
+extern void host_SetTwoDPlacement(int placement, uint32_t tag);
+extern int  recomp_config_bool(const char *env_name, const char *key, int fallback);
+
+typedef struct Ts2UiPlace { uint32_t site; int placement; } Ts2UiPlace;
+
+/* Where TimeSplitters 2 (PAL, this XBE) draws what. Sites are return
+ * addresses in the game's UI code. Ends at site 0.
+ *
+ * Built from the front end, screen by screen: frames captured with
+ * RECOMP_TS2_UI_SITES=1, each site drawn alone and each left out with
+ * d3d8_replay --each-tag / --each-tag-hidden, and the table tried on the
+ * captures with --place before it went in here. The rule: whatever covers
+ * the screen spans the picture, the side decorations and the header's
+ * left and right ends go to the edges of it, and everything a player
+ * reads stays in proportion in the middle. A full-screen pass left to the
+ * renderer's width guess was sometimes kept at 4:3, and its edge showed
+ * as a seam down both old borders on every screen. */
+static const Ts2UiPlace k_ts2_ui_places[] = {
+    /* Full-screen quads, fades and post passes (the glow over the frame). */
+    { 0x000224CA, TS2_UI_STRETCH }, { 0x000224F3, TS2_UI_STRETCH },
+    { 0x00022520, TS2_UI_STRETCH }, { 0x00022548, TS2_UI_STRETCH },
+    { 0x00022635, TS2_UI_STRETCH }, { 0x00022650, TS2_UI_STRETCH },
+    { 0x0002266B, TS2_UI_STRETCH }, { 0x0002268A, TS2_UI_STRETCH },
+    { 0x000CA02A, TS2_UI_STRETCH }, { 0x000CA2C1, TS2_UI_STRETCH },
+    { 0x000CA52A, TS2_UI_STRETCH },
+    /* Backdrop: the tunnel ring, the title screen's nebula, the footer. */
+    { 0x000887E3, TS2_UI_STRETCH }, { 0x000B85C9, TS2_UI_STRETCH },
+    { 0x0008990F, TS2_UI_STRETCH },
+    /* Header banner and the rules under and below it. */
+    { 0x00089714, TS2_UI_STRETCH }, { 0x000897AE, TS2_UI_STRETCH },
+    { 0x0008985F, TS2_UI_STRETCH }, { 0x0008988A, TS2_UI_STRETCH },
+    { 0x000898B2, TS2_UI_STRETCH }, { 0x00089937, TS2_UI_STRETCH },
+    /* Left edge: the scrolling binary, the logo and the screen's name
+     * beneath it, the button hints. */
+    { 0x000885C5, TS2_UI_LEFT }, { 0x0008861D, TS2_UI_LEFT },
+    { 0x00089836, TS2_UI_LEFT }, { 0x000899C5, TS2_UI_LEFT },
+    { 0x000F0415, TS2_UI_LEFT },
+    /* Right edge: the purple glow. */
+    { 0x000889D2, TS2_UI_RIGHT },
+    /* Kept in proportion: panels, their glow and selection bar, menu
+     * items, the title logo, the level name, the loading picture. The glow
+     * (000EF824) is the panel's shadow as well as its rays, so it stays
+     * with the panel; on the story screens, where the panel is at the
+     * right, its rays end at the old edge. */
+    { 0x000EF824, TS2_UI_CENTRE }, { 0x000EF43A, TS2_UI_CENTRE },
+    { 0x000EEF97, TS2_UI_CENTRE }, { 0x000F0106, TS2_UI_CENTRE },
+    { 0x000EE789, TS2_UI_CENTRE }, { 0x000EE804, TS2_UI_CENTRE },
+    { 0x000EE7E8, TS2_UI_CENTRE }, { 0x000EE7C8, TS2_UI_CENTRE },
+    { 0x000EE7A4, TS2_UI_CENTRE }, { 0x000EEA4D, TS2_UI_CENTRE },
+    { 0x000F198A, TS2_UI_CENTRE }, { 0x000F1A16, TS2_UI_CENTRE },
+    { 0x00088FD3, TS2_UI_CENTRE }, { 0x000890BB, TS2_UI_CENTRE },
+    { 0x000EFE57, TS2_UI_CENTRE }, { 0x00089D55, TS2_UI_CENTRE },
+    { 0x001A213B, TS2_UI_CENTRE }, { 0x00089606, TS2_UI_CENTRE },
+    { 0, TS2_UI_AUTO }
+};
+
+static Ts2UiPlace g_ts2_ui_extra[64];   /* RECOMP_TS2_UI_PLACE */
+static int        g_ts2_ui_extra_count;
+static int        g_ts2_ui_default = TS2_UI_AUTO;
+static int        g_ts2_ui_mode = -1;   /* 0 off, 1 placing, 2 placing and tagging sites */
+
+/* The batch: what is queued in it came from this site, with this placement. */
+static int      g_ts2_batch_place = TS2_UI_AUTO;
+static uint32_t g_ts2_batch_site;
+
+/* The callers of the wrapped drawing functions now running, outermost first. */
+static RECOMP_MANUAL_TLS uint32_t g_ts2_chain[8];
+static RECOMP_MANUAL_TLS int      g_ts2_depth;
+
+#define TS2_MEM32(a) (*(volatile uint32_t *)((uintptr_t)(uint32_t)(a) + g_xbox_mem_offset))
+
+static int ts2_ui_parse_place(const char *s)
+{
+    if (!strncmp(s, "stretch", 7)) return TS2_UI_STRETCH;
+    if (!strncmp(s, "centre", 6) || !strncmp(s, "center", 6)) return TS2_UI_CENTRE;
+    if (!strncmp(s, "left", 4)) return TS2_UI_LEFT;
+    if (!strncmp(s, "right", 5)) return TS2_UI_RIGHT;
+    return TS2_UI_AUTO;
+}
+
+static int ts2_ui_mode(void)
+{
+    const char *v;
+
+    if (g_ts2_ui_mode >= 0)
+        return g_ts2_ui_mode;
+    g_ts2_ui_mode = recomp_config_bool("RECOMP_WIDESCREEN", "widescreen", 0) ? 1 : 0;
+    v = getenv("RECOMP_TS2_UI_SITES");
+    if (v && *v && strcmp(v, "0") != 0)
+        g_ts2_ui_mode = 2;
+    v = getenv("RECOMP_TS2_UI_DEFAULT");
+    if (v && *v)
+        g_ts2_ui_default = ts2_ui_parse_place(v);
+    v = getenv("RECOMP_TS2_UI_PLACE");
+    while (v && *v && g_ts2_ui_extra_count < (int)(sizeof g_ts2_ui_extra / sizeof g_ts2_ui_extra[0])) {
+        char *end = NULL;
+        unsigned long site = strtoul(v, &end, 16);
+
+        if (!end || *end != '=')
+            break;
+        g_ts2_ui_extra[g_ts2_ui_extra_count].site = (uint32_t)site;
+        g_ts2_ui_extra[g_ts2_ui_extra_count].placement = ts2_ui_parse_place(end + 1);
+        g_ts2_ui_extra_count++;
+        v = strchr(end, ',');
+        if (v)
+            v++;
+    }
+    if (g_ts2_ui_mode)
+        fprintf(stderr, "[TS2-UI] 2D placement by call site: %d table entries, %d from "
+                "RECOMP_TS2_UI_PLACE%s\n",
+                (int)(sizeof k_ts2_ui_places / sizeof k_ts2_ui_places[0]) - 1,
+                g_ts2_ui_extra_count, g_ts2_ui_mode == 2 ? "; tagging sites" : "");
+    return g_ts2_ui_mode;
+}
+
+static int ts2_ui_place_for(uint32_t site)
+{
+    int i;
+
+    for (i = 0; i < g_ts2_ui_extra_count; i++)
+        if (g_ts2_ui_extra[i].site == site)
+            return g_ts2_ui_extra[i].placement;
+    for (i = 0; k_ts2_ui_places[i].site; i++)
+        if (k_ts2_ui_places[i].site == site)
+            return k_ts2_ui_places[i].placement;
+    return g_ts2_ui_default;
+}
+
+/* Tagging mode: say once which chain a new site came through. */
+static void ts2_ui_note_site(uint32_t site, uint32_t leaf)
+{
+    static uint32_t seen[512];
+    static int seen_count;
+    int i;
+
+    for (i = 0; i < seen_count; i++)
+        if (seen[i] == site)
+            return;
+    if (seen_count < (int)(sizeof seen / sizeof seen[0]))
+        seen[seen_count++] = site;
+    RECOMP_DIAG_LOCK();
+    fprintf(stderr, "[TS2-UI] site %08X:", site);
+    for (i = 0; i < g_ts2_depth && i < 8; i++)
+        fprintf(stderr, " %08X ->", g_ts2_chain[i]);
+    fprintf(stderr, " %08X -> reserve\n", leaf);
+    RECOMP_DIAG_UNLOCK();
+    fflush(stderr);
+}
+
+/* Run the batch flush from here. A lifted function returns with `ret`, so
+ * it needs a return address on the guest stack to pop. */
+extern void sub_001C9CDF(void);
+static void ts2_ui_flush(void)
+{
+    g_esp -= 4;
+    TS2_MEM32(g_esp) = 0;
+    sub_001C9CDF();
+}
+
+extern void sub_001C9265_gen(void);
+void sub_001C9265(void)
+{
+    if (ts2_ui_mode()) {
+        uint32_t leaf = TS2_MEM32(g_esp);
+        uint32_t site = g_ts2_depth ? g_ts2_chain[0] : leaf;
+        int place = ts2_ui_place_for(site);
+
+        if (g_ts2_ui_mode == 2)
+            ts2_ui_note_site(site, leaf);
+        if (place != g_ts2_batch_place || (g_ts2_ui_mode == 2 && site != g_ts2_batch_site)) {
+            /* The queue holds another site's pieces: draw them under their
+             * own placement before this one's join it. */
+            ts2_ui_flush();
+            g_ts2_batch_place = place;
+            g_ts2_batch_site = site;
+        }
+    }
+    sub_001C9265_gen();
+}
+
+extern void sub_001C9CDF_gen(void);
+void sub_001C9CDF(void)
+{
+    if (g_ts2_ui_mode <= 0) {
+        sub_001C9CDF_gen();
+        return;
+    }
+    host_SetTwoDPlacement(g_ts2_batch_place,
+                              g_ts2_ui_mode == 2 ? g_ts2_batch_site : 0);
+    sub_001C9CDF_gen();
+    host_SetTwoDPlacement(TS2_UI_AUTO, 0);
+}
+
+/* The engine's shared drawing functions: the helpers that reserve vertices
+ * for many callers (quads, sprites, text), and the ones above them that the
+ * menu and HUD code call. Whoever called the outermost of them is the site. */
+static void ts2_ui_enter(void)
+{
+    if (g_ts2_ui_mode > 0) {
+        if (g_ts2_depth < 8)
+            g_ts2_chain[g_ts2_depth] = TS2_MEM32(g_esp);
+        g_ts2_depth++;
+    }
+}
+
+static void ts2_ui_leave(void)
+{
+    if (g_ts2_ui_mode > 0 && g_ts2_depth > 0)
+        g_ts2_depth--;
+}
+
+extern void sub_001B6290_gen(void);
+void sub_001B6290(void) { ts2_ui_enter(); sub_001B6290_gen(); ts2_ui_leave(); }
+extern void sub_001B6620_gen(void);
+void sub_001B6620(void) { ts2_ui_enter(); sub_001B6620_gen(); ts2_ui_leave(); }
+extern void sub_001C1328_gen(void);
+void sub_001C1328(void) { ts2_ui_enter(); sub_001C1328_gen(); ts2_ui_leave(); }
+extern void sub_001B5E80_gen(void);
+void sub_001B5E80(void) { ts2_ui_enter(); sub_001B5E80_gen(); ts2_ui_leave(); }
+extern void sub_001B58E0_gen(void);
+void sub_001B58E0(void) { ts2_ui_enter(); sub_001B58E0_gen(); ts2_ui_leave(); }
+extern void sub_001B6A20_gen(void);
+void sub_001B6A20(void) { ts2_ui_enter(); sub_001B6A20_gen(); ts2_ui_leave(); }
+extern void sub_001B7A00_gen(void);
+void sub_001B7A00(void) { ts2_ui_enter(); sub_001B7A00_gen(); ts2_ui_leave(); }
+extern void sub_001B56D0_gen(void);
+void sub_001B56D0(void) { ts2_ui_enter(); sub_001B56D0_gen(); ts2_ui_leave(); }
+extern void sub_00058360_gen(void);
+void sub_00058360(void) { ts2_ui_enter(); sub_00058360_gen(); ts2_ui_leave(); }
+extern void sub_001B5DA0_gen(void);
+void sub_001B5DA0(void) { ts2_ui_enter(); sub_001B5DA0_gen(); ts2_ui_leave(); }
+extern void sub_001B3ED0_gen(void);
+void sub_001B3ED0(void) { ts2_ui_enter(); sub_001B3ED0_gen(); ts2_ui_leave(); }
+extern void sub_000C4F80_gen(void);
+void sub_000C4F80(void) { ts2_ui_enter(); sub_000C4F80_gen(); ts2_ui_leave(); }
+extern void sub_001B79B0_gen(void);
+void sub_001B79B0(void) { ts2_ui_enter(); sub_001B79B0_gen(); ts2_ui_leave(); }
+extern void sub_001B7860_gen(void);
+void sub_001B7860(void) { ts2_ui_enter(); sub_001B7860_gen(); ts2_ui_leave(); }
+extern void sub_001B7950_gen(void);
+void sub_001B7950(void) { ts2_ui_enter(); sub_001B7950_gen(); ts2_ui_leave(); }
+extern void sub_000AA5F0_gen(void);
+void sub_000AA5F0(void) { ts2_ui_enter(); sub_000AA5F0_gen(); ts2_ui_leave(); }
+extern void sub_000AABF0_gen(void);
+void sub_000AABF0(void) { ts2_ui_enter(); sub_000AABF0_gen(); ts2_ui_leave(); }
+extern void sub_000AA670_gen(void);
+void sub_000AA670(void) { ts2_ui_enter(); sub_000AA670_gen(); ts2_ui_leave(); }
+extern void sub_00138FE0_gen(void);
+void sub_00138FE0(void) { ts2_ui_enter(); sub_00138FE0_gen(); ts2_ui_leave(); }
+extern void sub_001AB7C0_gen(void);
+void sub_001AB7C0(void) { ts2_ui_enter(); sub_001AB7C0_gen(); ts2_ui_leave(); }
+extern void sub_001AC790_gen(void);
+void sub_001AC790(void) { ts2_ui_enter(); sub_001AC790_gen(); ts2_ui_leave(); }
+extern void sub_001ACD50_gen(void);
+void sub_001ACD50(void) { ts2_ui_enter(); sub_001ACD50_gen(); ts2_ui_leave(); }
+extern void sub_001ACDD0_gen(void);
+void sub_001ACDD0(void) { ts2_ui_enter(); sub_001ACDD0_gen(); ts2_ui_leave(); }
+extern void sub_001ACE30_gen(void);
+void sub_001ACE30(void) { ts2_ui_enter(); sub_001ACE30_gen(); ts2_ui_leave(); }
+extern void sub_001ACE90_gen(void);
+void sub_001ACE90(void) { ts2_ui_enter(); sub_001ACE90_gen(); ts2_ui_leave(); }
+extern void sub_001AD150_gen(void);
+void sub_001AD150(void) { ts2_ui_enter(); sub_001AD150_gen(); ts2_ui_leave(); }
+extern void sub_001AD1D0_gen(void);
+void sub_001AD1D0(void) { ts2_ui_enter(); sub_001AD1D0_gen(); ts2_ui_leave(); }
+extern void sub_001B7520_gen(void);
+void sub_001B7520(void) { ts2_ui_enter(); sub_001B7520_gen(); ts2_ui_leave(); }
