@@ -485,10 +485,11 @@ void sub_00032DC0(void)
 }
 
 /*
- * Widescreen in the levels, 4:3 in the front end. The front end is laid
- * out for 4:3 and mixes 3D backdrops with 2D panels, and no placement of
- * its pieces in a 16:9 picture is right (they judder between stretched and
- * squeezed as they animate). So it is shown at 4:3 between bars, as the
+ * The front end at 4:3, if asked (RECOMP_TS2_MENUS=43 below). It is laid
+ * out for 4:3 and mixes 3D backdrops with 2D panels; left to the
+ * renderer's width guess its pieces juddered between stretched and
+ * squeezed as they animated. The placement table below fixes that, and
+ * this is the fallback: the front end shown at 4:3 between bars, as the
  * console drew it, and the levels and their cutscenes at 16:9.
  *
  * Which screen a frame belongs to, traced frame by frame through a run:
@@ -515,11 +516,34 @@ void sub_0009F1C0(void)
     sub_0009F1C0_gen();
 }
 
+/*
+ * RECOMP_TS2_MENUS / ts2_menus = wide (the default) lays the front end out
+ * for 16:9 with the placement table below, so every screen is widescreen;
+ * 43 keeps the front end and the loading screens at 4:3 between bars, as
+ * above.
+ */
+extern const char *recomp_config_lookup(const char *env_name, const char *key);
+
+static int ts2_menus_wide(void)
+{
+    static int wide = -1;
+
+    if (wide < 0) {
+        const char *v = recomp_config_lookup("RECOMP_TS2_MENUS", "ts2_menus");
+
+        wide = !(v && (!strcmp(v, "43") || !strcmp(v, "4:3")));
+        fprintf(stderr, "[TS2-UI] menus %s (RECOMP_TS2_MENUS=wide|43)\n",
+                wide ? "laid out for 16:9" : "at 4:3");
+    }
+    return wide;
+}
+
 extern void sub_001CC530_gen(void);
 void sub_001CC530(void)
 {
     sub_001CC530_gen();
-    xbox_D3D8SetWideFrames(g_ts2_frame_camera && !g_ts2_frame_front_end);
+    xbox_D3D8SetWideFrames(ts2_menus_wide() ||
+                           (g_ts2_frame_camera && !g_ts2_frame_front_end));
     g_ts2_frame_camera = g_ts2_frame_front_end = 0;
 }
 
@@ -574,8 +598,53 @@ extern int  recomp_config_bool(const char *env_name, const char *key, int fallba
 typedef struct Ts2UiPlace { uint32_t site; int placement; } Ts2UiPlace;
 
 /* Where TimeSplitters 2 (PAL, this XBE) draws what. Sites are return
- * addresses in the game's UI code. Ends at site 0. */
+ * addresses in the game's UI code. Ends at site 0.
+ *
+ * Built from the front end, screen by screen: frames captured with
+ * RECOMP_TS2_UI_SITES=1, each site drawn alone and each left out with
+ * d3d8_replay --each-tag / --each-tag-hidden, and the table tried on the
+ * captures with --place before it went in here. The rule: whatever covers
+ * the screen spans the picture, the side decorations and the header's
+ * left and right ends go to the edges of it, and everything a player
+ * reads stays in proportion in the middle. A full-screen pass left to the
+ * renderer's width guess was sometimes kept at 4:3, and its edge showed
+ * as a seam down both old borders on every screen. */
 static const Ts2UiPlace k_ts2_ui_places[] = {
+    /* Full-screen quads, fades and post passes (the glow over the frame). */
+    { 0x000224CA, TS2_UI_STRETCH }, { 0x000224F3, TS2_UI_STRETCH },
+    { 0x00022520, TS2_UI_STRETCH }, { 0x00022548, TS2_UI_STRETCH },
+    { 0x00022635, TS2_UI_STRETCH }, { 0x00022650, TS2_UI_STRETCH },
+    { 0x0002266B, TS2_UI_STRETCH }, { 0x0002268A, TS2_UI_STRETCH },
+    { 0x000CA02A, TS2_UI_STRETCH }, { 0x000CA2C1, TS2_UI_STRETCH },
+    { 0x000CA52A, TS2_UI_STRETCH },
+    /* Backdrop: the tunnel ring, the title screen's nebula, the footer. */
+    { 0x000887E3, TS2_UI_STRETCH }, { 0x000B85C9, TS2_UI_STRETCH },
+    { 0x0008990F, TS2_UI_STRETCH },
+    /* Header banner and the rules under and below it. */
+    { 0x00089714, TS2_UI_STRETCH }, { 0x000897AE, TS2_UI_STRETCH },
+    { 0x0008985F, TS2_UI_STRETCH }, { 0x0008988A, TS2_UI_STRETCH },
+    { 0x000898B2, TS2_UI_STRETCH }, { 0x00089937, TS2_UI_STRETCH },
+    /* Left edge: the scrolling binary, the logo and the screen's name
+     * beneath it, the button hints. */
+    { 0x000885C5, TS2_UI_LEFT }, { 0x0008861D, TS2_UI_LEFT },
+    { 0x00089836, TS2_UI_LEFT }, { 0x000899C5, TS2_UI_LEFT },
+    { 0x000F0415, TS2_UI_LEFT },
+    /* Right edge: the purple glow. */
+    { 0x000889D2, TS2_UI_RIGHT },
+    /* Kept in proportion: panels, their glow and selection bar, menu
+     * items, the title logo, the level name, the loading picture. The glow
+     * (000EF824) is the panel's shadow as well as its rays, so it stays
+     * with the panel; on the story screens, where the panel is at the
+     * right, its rays end at the old edge. */
+    { 0x000EF824, TS2_UI_CENTRE }, { 0x000EF43A, TS2_UI_CENTRE },
+    { 0x000EEF97, TS2_UI_CENTRE }, { 0x000F0106, TS2_UI_CENTRE },
+    { 0x000EE789, TS2_UI_CENTRE }, { 0x000EE804, TS2_UI_CENTRE },
+    { 0x000EE7E8, TS2_UI_CENTRE }, { 0x000EE7C8, TS2_UI_CENTRE },
+    { 0x000EE7A4, TS2_UI_CENTRE }, { 0x000EEA4D, TS2_UI_CENTRE },
+    { 0x000F198A, TS2_UI_CENTRE }, { 0x000F1A16, TS2_UI_CENTRE },
+    { 0x00088FD3, TS2_UI_CENTRE }, { 0x000890BB, TS2_UI_CENTRE },
+    { 0x000EFE57, TS2_UI_CENTRE }, { 0x00089D55, TS2_UI_CENTRE },
+    { 0x001A213B, TS2_UI_CENTRE }, { 0x00089606, TS2_UI_CENTRE },
     { 0, TS2_UI_AUTO }
 };
 
