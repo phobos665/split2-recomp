@@ -31,7 +31,7 @@ Copy the extracted disc into a folder called `game`, so that `game\default.xbe`
 exists (with `data\`, `music\` and the rest beside it). Then:
 
 ```bat
-py -3 scripts\build.py
+py -3 ./scripts/build.py
 ```
 
 The first run translates the game (a few minutes) and then compiles it (longer).
