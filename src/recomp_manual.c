@@ -701,6 +701,9 @@ static uint32_t g_ts2_batch_site;
  * one is a chunk in a frame capture). */
 static int      g_ts2_host_place = -1;
 static uint32_t g_ts2_host_tag;
+/* Set while a reservation flushes ahead of itself: the flush must not reset
+ * the renderer's placement then (sub_001C9265). */
+static int      g_ts2_keep_host;
 
 static void ts2_ui_host_place(int place, uint32_t tag)
 {
@@ -814,27 +817,39 @@ void sub_001C9265(void)
         uint32_t site = g_ts2_depth ? g_ts2_chain[0] : leaf;
         int place = ts2_ui_place_for(site);
 
+        int change = place != g_ts2_batch_place || place == TS2_UI_SIDE ||
+                     (g_ts2_ui_mode == 2 && site != g_ts2_batch_site);
+
         if (g_ts2_ui_mode == 2)
             ts2_ui_note_site(site, leaf);
-        if (place != g_ts2_batch_place || place == TS2_UI_SIDE ||
-            (g_ts2_ui_mode == 2 && site != g_ts2_batch_site)) {
+        if (change) {
             /* The queue holds another site's pieces: draw them under their
              * own placement before this one's join it. A SIDE site's pieces
              * are drawn one by one, since the renderer pins each draw to the
              * edge it is nearer and one draw holding both hands' ammo would
-             * be pinned to neither. */
+             * be pinned to neither. The renderer keeps the old placement
+             * through the reservation below (see there). */
+            g_ts2_keep_host = 1;
             ts2_ui_flush();
+            g_ts2_keep_host = 0;
+        }
+        /* The engine keeps more than one batch (by format, it seems), and
+         * sub_001C9CDF does not always draw the one that holds the last
+         * pieces: the reservation itself draws it, when the next piece does
+         * not fit it, by its own way (sub_001C967C calls the draw). So the
+         * renderer holds the old batch's placement until that has happened,
+         * and takes the new one after, for the pieces now queued -- whose
+         * batch may be drawn by either way. Setting the new one first put
+         * the right hand's ammo bars, the last piece before the next site,
+         * under that site's placement and left them in the 4:3 layout. */
+        sub_001C9265_gen();
+        if (change) {
             g_ts2_batch_place = place;
             g_ts2_batch_site = site;
         }
-        /* The renderer holds the batch's placement from the moment anything
-         * is queued in it, not only around sub_001C9CDF: the engine also
-         * draws the batch by other ways (sub_001C967C calls the draw
-         * itself), and a batch drawn that way came out under AUTO -- the
-         * ammo's bars and dark backing stayed in the 4:3 layout while the
-         * numbers went to the corners. */
         ts2_ui_host_place(g_ts2_batch_place,
                           g_ts2_ui_mode == 2 ? g_ts2_batch_site : 0);
+        return;
     }
     sub_001C9265_gen();
 }
@@ -849,8 +864,11 @@ void sub_001C9CDF(void)
     ts2_ui_host_place(g_ts2_batch_place, g_ts2_ui_mode == 2 ? g_ts2_batch_site : 0);
     sub_001C9CDF_gen();
     /* The batch is empty again: a draw that never went through it (a glow
-     * pass, a movie) must not inherit its placement. */
-    ts2_ui_host_place(TS2_UI_AUTO, 0);
+     * pass, a movie) must not inherit its placement -- unless a reservation
+     * is flushing ahead of itself, when another batch may still be drawn
+     * under this placement (sub_001C9265). */
+    if (!g_ts2_keep_host)
+        ts2_ui_host_place(TS2_UI_AUTO, 0);
 }
 
 /* The engine's shared drawing functions: the helpers that reserve vertices
