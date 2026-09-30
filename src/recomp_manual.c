@@ -587,7 +587,8 @@ void sub_001CC530(void)
  *   RECOMP_TS2_UI_DEFAULT=<p>   placement for sites not in the table (auto)
  */
 
-enum { TS2_UI_AUTO = 0, TS2_UI_STRETCH, TS2_UI_CENTRE, TS2_UI_LEFT, TS2_UI_RIGHT };
+enum { TS2_UI_AUTO = 0, TS2_UI_STRETCH, TS2_UI_CENTRE, TS2_UI_LEFT, TS2_UI_RIGHT,
+       TS2_UI_SIDE };
 
 /* xboxrecomp src/hle/hle_d3d8_record.h: xbox_D3D8SetTwoDPlacement, recorded in
  * frame captures so a capture replays with these placements. Same values
@@ -645,6 +646,39 @@ static const Ts2UiPlace k_ts2_ui_places[] = {
     { 0x00088FD3, TS2_UI_CENTRE }, { 0x000890BB, TS2_UI_CENTRE },
     { 0x000EFE57, TS2_UI_CENTRE }, { 0x00089D55, TS2_UI_CENTRE },
     { 0x001A213B, TS2_UI_CENTRE }, { 0x00089606, TS2_UI_CENTRE },
+
+    /* Arcade screens: the hex backdrop, the level list's pictures, the
+     * character select (portraits, name, stats, the picture of the one
+     * chosen), the panel's corners and scroll arrow, and the row of
+     * player figures at the bottom right, opposite the button hints. */
+    { 0x000A5085, TS2_UI_STRETCH },
+    { 0x0008A402, TS2_UI_CENTRE }, { 0x0008F837, TS2_UI_CENTRE },
+    { 0x0008F9B5, TS2_UI_CENTRE }, { 0x0008FA26, TS2_UI_CENTRE },
+    { 0x0008FC23, TS2_UI_CENTRE }, { 0x001B747A, TS2_UI_CENTRE },
+    { 0x001B74C3, TS2_UI_CENTRE }, { 0x001B74FF, TS2_UI_CENTRE },
+    { 0x000EE82A, TS2_UI_CENTRE }, { 0x000EE846, TS2_UI_CENTRE },
+    { 0x000F065F, TS2_UI_CENTRE },
+    { 0x0008E98D, TS2_UI_RIGHT },
+
+    /* In-game HUD, from an Arcade match: the rank badge in the top left
+     * corner, the radar in the top right, each hand's ammo at its own
+     * bottom corner (one piece of code draws both, hence SIDE), the kill
+     * message and the crosshair in the middle. The health and armour arcs
+     * are one ellipse framing the view, so it spans the picture. */
+    { 0x000BCF3E, TS2_UI_LEFT },   { 0x000BCFAE, TS2_UI_LEFT },
+    { 0x000BD129, TS2_UI_LEFT },
+    { 0x000BFDBE, TS2_UI_RIGHT },  { 0x000BFFD4, TS2_UI_RIGHT },
+    { 0x000C0033, TS2_UI_RIGHT },  { 0x000C0274, TS2_UI_RIGHT },
+    { 0x000C0324, TS2_UI_RIGHT },  { 0x000C043F, TS2_UI_RIGHT },
+    { 0x000BE66C, TS2_UI_SIDE },   { 0x000BEE57, TS2_UI_SIDE },
+    { 0x000BC31C, TS2_UI_CENTRE }, { 0x00058670, TS2_UI_CENTRE },
+    { 0x000C933F, TS2_UI_STRETCH },
+    /* Sprites the game places in the world and projects to the screen
+     * itself (the brazier's flame, muzzle flashes): they were projected
+     * through the widened camera, so they are already where the 3D is and
+     * squeezing them would pull them off it. */
+    { 0x001C021F, TS2_UI_STRETCH }, { 0x001BEBBE, TS2_UI_STRETCH },
+    { 0x001BEBF4, TS2_UI_STRETCH }, { 0x001BED57, TS2_UI_STRETCH },
     { 0, TS2_UI_AUTO }
 };
 
@@ -669,6 +703,7 @@ static int ts2_ui_parse_place(const char *s)
     if (!strncmp(s, "centre", 6) || !strncmp(s, "center", 6)) return TS2_UI_CENTRE;
     if (!strncmp(s, "left", 4)) return TS2_UI_LEFT;
     if (!strncmp(s, "right", 5)) return TS2_UI_RIGHT;
+    if (!strncmp(s, "side", 4)) return TS2_UI_SIDE;
     return TS2_UI_AUTO;
 }
 
@@ -761,9 +796,13 @@ void sub_001C9265(void)
 
         if (g_ts2_ui_mode == 2)
             ts2_ui_note_site(site, leaf);
-        if (place != g_ts2_batch_place || (g_ts2_ui_mode == 2 && site != g_ts2_batch_site)) {
+        if (place != g_ts2_batch_place || place == TS2_UI_SIDE ||
+            (g_ts2_ui_mode == 2 && site != g_ts2_batch_site)) {
             /* The queue holds another site's pieces: draw them under their
-             * own placement before this one's join it. */
+             * own placement before this one's join it. A SIDE site's pieces
+             * are drawn one by one, since the renderer pins each draw to the
+             * edge it is nearer and one draw holding both hands' ammo would
+             * be pinned to neither. */
             ts2_ui_flush();
             g_ts2_batch_place = place;
             g_ts2_batch_site = site;
