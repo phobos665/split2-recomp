@@ -538,9 +538,25 @@ static int ts2_menus_wide(void)
     return wide;
 }
 
+/*
+ * Frame interpolation (xboxrecomp hle_d3d8_interp.c, RECOMP_FRAME_INTERP)
+ * blends the matrices in TS2's vertex constants, measured from captures:
+ * c60-c63 hold the projection alone, set once or twice a frame; c64-c67
+ * the model-view of each object; c68-c75 the second and third matrices of
+ * a skinned piece's palette. All affine, rows with (0,0,0,1) last. Said
+ * once, at the first present, which is before any level is drawn.
+ */
+extern void xbox_D3D8SetInterpRegisters(int projection, int affine_first, int affine_count);
+
 extern void sub_001CC530_gen(void);
 void sub_001CC530(void)
 {
+    static int interp_said;
+
+    if (!interp_said) {
+        interp_said = 1;
+        xbox_D3D8SetInterpRegisters(60, 64, 12);
+    }
     sub_001CC530_gen();
     xbox_D3D8SetWideFrames(ts2_menus_wide() ||
                            (g_ts2_frame_camera && !g_ts2_frame_front_end));
