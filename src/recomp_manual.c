@@ -685,6 +685,30 @@ static const Ts2UiPlace k_ts2_ui_places[] = {
      * squeezing them would pull them off it. */
     { 0x001C021F, TS2_UI_STRETCH }, { 0x001BEBBE, TS2_UI_STRETCH },
     { 0x001BEBF4, TS2_UI_STRETCH }, { 0x001BED57, TS2_UI_STRETCH },
+    /* The handheld's map. It is drawn at the start of the frame into a
+     * corner of the back buffer (x 128 on, scissored to 128..309 by
+     * 0..181), copied out of it with CopyRects into the 128x128 texture the
+     * handheld's screen shows, and the screen is then cleared for the
+     * level. Whatever is drawn there has to stay at its own pixels, or
+     * widescreen's squeeze moves it out of the corner that is copied. */
+    { 0x000E6576, TS2_UI_STRETCH }, { 0x000E507E, TS2_UI_STRETCH },
+    { 0x000E5517, TS2_UI_STRETCH }, { 0x000E55E5, TS2_UI_STRETCH },
+    { 0x000E4888, TS2_UI_STRETCH }, { 0x000E4911, TS2_UI_STRETCH },
+    { 0x000E57F5, TS2_UI_STRETCH }, { 0x000E681C, TS2_UI_STRETCH },
+    /* Pause menu (in-game Start): the ring of health and armour arcs
+     * (sub_000D1E30, every page, through the same arc helper as the HUD's
+     * 000C933F) and the dark cap across its top. Left to the width guess,
+     * a piece of the ring the engine's batch cut off at less than 75% of
+     * the width -- the cut point moves frame to frame as the batch fills --
+     * was squeezed for that frame, and the arc flickered inward. */
+    { 0x000D1EEF, TS2_UI_STRETCH },
+    { 0x000CDAF0, TS2_UI_STRETCH }, { 0x000CDB16, TS2_UI_STRETCH },
+    /* Its backing: the dim, letterbox bars and rules, the blue backdrop.
+     * Always full width, so the guess got them right; set so they stay
+     * right under RECOMP_WIDESCREEN_2D=centre too. */
+    { 0x000CCB7F, TS2_UI_STRETCH }, { 0x000CCBA3, TS2_UI_STRETCH },
+    { 0x000CCBC7, TS2_UI_STRETCH }, { 0x000CCBF5, TS2_UI_STRETCH },
+    { 0x000CCC20, TS2_UI_STRETCH }, { 0x000CCAEE, TS2_UI_STRETCH },
     { 0, TS2_UI_AUTO }
 };
 
