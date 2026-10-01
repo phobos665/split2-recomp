@@ -15,7 +15,7 @@ Estimates are working time; calendar time will be longer. They date from
 | Widescreen (16:9) | Both | Camera widened where the game builds it (culling agrees); front end, HUD and Arcade screens laid out for 16:9 by call site. `RECOMP_TS2_MENUS=43` brings back the 4:3 front end. |
 | Internal resolution | Toolkit | `RECOMP_RES_SCALE=1..8` |
 | Vulkan renderer | Toolkit | `RECOMP_D3D8_BACKEND=vulkan`. Needs `third_party/dxc` (the DXC GitHub release) for the build |
-| Launcher mouse input | Toolkit | Arrow hit boxes match what is drawn (branch `fix/launcher-mouse-hitboxes`) |
+| Launcher mouse input | Toolkit | Arrow hit boxes match what is drawn (xboxrecomp #24) |
 
 ### Widescreen leftovers
 
