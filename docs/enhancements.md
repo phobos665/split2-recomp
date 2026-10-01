@@ -16,6 +16,8 @@ Estimates are working time; calendar time will be longer. They date from
 | Internal resolution | Toolkit | `RECOMP_RES_SCALE=1..8` |
 | Vulkan renderer | Toolkit | `RECOMP_D3D8_BACKEND=vulkan`. Needs `third_party/dxc` (the DXC GitHub release) for the build |
 | Launcher mouse input | Toolkit | Arrow hit boxes match what is drawn (xboxrecomp #24) |
+| Variable refresh rate | Toolkit | Borderless fullscreen (Alt+Enter), VRR presents on both renderers; launcher rows Fullscreen and Variable refresh rate (xboxrecomp #29) |
+| Frame interpolation | Both | `frame_interp = 2..4` (launcher row): 120+ frames a second shown while the game runs at 60. TS2 names its matrix registers (c60 projection, c64-c75 model-view and bones) in `src/recomp_manual.c`. See below |
 
 ### Widescreen leftovers
 
@@ -28,6 +30,16 @@ Estimates are working time; calendar time will be longer. They date from
   Needs an "extend to the edge" placement in the toolkit.
 - Vulkan has not been checked in play; the scripted runs do not reach it.
 
+### Frame interpolation leftovers
+
+- Snow and other particles the CPU positions step at 60 among 120.
+- A 144 Hz display needs VRR for even pacing; a render thread would serve
+  fixed refresh rates (toolkit, 3-4 weeks).
+- Not yet checked: the first-person weapon and muzzle flashes while
+  firing, guards animating (the bone matrices), the pause menu, a death.
+- Measurements and how it works:
+  `xboxrecomp/docs/technical/frame-interpolation.md`.
+
 How to survey a screen: F11 with `RECOMP_TS2_UI_SITES=1` set, then
 `d3d8_replay --each-tag` / `--each-tag-hidden` on the capture and
 `--place <site>=<placement>` to try a placement before it goes into
@@ -37,7 +49,6 @@ How to survey a screen: F11 with `RECOMP_TS2_UI_SITES=1` set, then
 
 | Enhancement | Toolkit | TS2 | Total | Confidence |
 | --- | --- | --- | --- | --- |
-| [Frame interpolation (above 60 fps)](#frame-interpolation-above-60-fps) | 7–11 weeks | 1–2 weeks | 8–13 weeks (+3–4 for a render thread) | Medium, after a 2-week prototype |
 | [Netplay (System Link)](#netplay-system-link) | 2–4 weeks | 1–2 weeks | 3–8 weeks, by reach | Low to medium |
 | [Modern controller icons](#modern-controller-icons) | 2–3 weeks | ~1 week | 3–4 weeks (first milestone 1.5–2) | High to medium |
 | [Native mouselook](#native-mouselook) | 1–2 weeks | 2–4 weeks | 3–6 weeks (+2–3 for mouse menus) | Medium to low |
@@ -48,32 +59,6 @@ replacement by content hash, which is also the first step for texture mods.
 Netplay is more robust with the frame-rate work's fixed 60 Hz tick.
 
 ---
-
-### Frame interpolation (above 60 fps)
-
-The game's logic steps once per frame; uncapped, its physics and timers run
-fast. So the logic stays at 60, and the toolkit draws the extra frames:
-it keeps each frame's draws and re-draws them with the camera, object and
-bone matrices blended between the last two frames. Making the game's logic
-time-based instead would take months and help no other title.
-
-| Step | Where | Estimate |
-| --- | --- | --- |
-| Re-check the design against the RHI and Vulkan code | Toolkit | 2–3 days |
-| **Prototype:** blend captured frames offline against the real frame between them, then a live 2× test in Siberia | Toolkit | 2 weeks, then go / no-go |
-| Production: keep each frame, match draws, blend matrices, cut detection, pacing, settings | Toolkit | 4–7 weeks |
-| TS2 tuning: which registers are matrices (60, and 64–75), what not to blend (weapon, HUD), cut thresholds | TS2 | 1–2 weeks |
-| Optional: render thread, for any refresh rate on a fixed display | Toolkit | +3–4 weeks |
-
-Go if: at least 90% of 3D draws match between frames; blended frames beat
-repeating one on at least 90% of test cases; the game holds 60.0 while
-about 120 frames a second are presented; the re-draw costs 3 ms or less.
-
-Known risks: effects the game rebuilds every frame (particles, muzzle
-flashes) will not blend; TS2 copies the screen into a texture three times a
-frame, which capture does not see yet; even pacing on a fixed 144 Hz panel
-needs the render thread. The Vulkan backend already presents in mailbox
-mode, which helps pacing.
 
 ### Netplay (System Link)
 

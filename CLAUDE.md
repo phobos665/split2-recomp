@@ -25,7 +25,7 @@ planned enhancement. TS2's share of it:
 | Enhancement | TS2's part |
 | --- | --- |
 | Widescreen | Done: the in-game camera is widened where it is built (`sub_00032DC0`), and the front end and HUD are placed by call site (`k_ts2_ui_places` in `src/recomp_manual.c`). Leftovers are in `docs/enhancements.md` |
-| Frame rate above 60 | Find what steps per frame or per vblank (physics, animation, timers) and make it time-based, or keep logic at 60 and present above it |
+| Frame rate above 60 | Done by presenting above it: the toolkit's frame interpolation (`frame_interp`) draws the in-between frames while logic stays at 60. TS2 names its matrix registers (c60 projection, c64-c75) at its first present, `sub_001CC530` in `src/recomp_manual.c`. Leftovers are in `docs/enhancements.md` |
 | Online play | TS2 has system link (LAN) and no Xbox Live. Once the toolkit tunnels system link, little should be left to do here |
 | Mods | Assets are in `data/*.pak`. Naming dumped textures by pak entry is this repo's job; the dump and replace is the toolkit's |
 | Cutscene skip | In-engine cutscenes: find where they start and whether the game already has a skip |
