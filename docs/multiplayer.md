@@ -12,7 +12,7 @@ recompilation, then carry it over the internet.
 The game links Microsoft's network library (XNETS) into its own executable. The
 whole stack runs as game code: sockets, the secure key exchange between consoles,
 UDP/IP, and the driver for the network card. In this XBE it sits in the `XNET`
-section (VA `0x0020B0E0`, 37,836 bytes). `config/xdk_symbols.json` names 8 of its
+section (VA `0x0020B0E0` in PAL, `0x0020ACC0` in USA, 37,836 bytes). `config/<region>/xdk_symbols.json` names 8 of its
 functions (`XNetStartup`, `WSAStartup`, `socket`, `bind`, `recv`, `ioctlsocket`,
 `XNetGetEthernetLinkStatus`, `XnInit`). The rest are unnamed.
 

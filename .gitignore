@@ -1,4 +1,4 @@
-# The game: bring your own copy (see README.md). Never commit it. (PAL ONLY right now)
+# The game: bring your own copy (see README.md). Never commit it.
 game/
 
 # Lifted from the game, so it is game code: generated on your machine only.
