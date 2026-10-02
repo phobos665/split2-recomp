@@ -24,7 +24,7 @@
  *   Title:       TimeSplitters 2
  *   Title ID:    0x4553000A
  *   Base addr:   0x00010000
- *   Entry point: 0x001CF3C9
+ *   Entry point: 0x001CF3C9 (PAL): TS2_ENTRY_POINT
  *   Code size:   ~??? KB (.text)
  *   Sections:    ?? (list them)
  *   Kernel imports: ??
@@ -40,6 +40,10 @@
 /* xboxrecomp runtime headers */
 #include <xbox/xboxrecomp.h>
 #include "xbox_watchpoint.h"
+
+/* Which release of the game src/recomp/gen was lifted from: written by
+ * scripts/build.py with the lift (TS2_REGION_NAME, TS2_ENTRY_POINT). */
+#include "ts2_region.h"
 
 /*
  * If xboxrecomp.h is not an umbrella header in your setup, include
@@ -81,7 +85,7 @@ extern ptrdiff_t g_xbox_mem_offset;
  * TODO: Set these from your xbe_parser output.
  * Run: py -3 -m tools.xbe_parser game/default.xbe
  */
-#define YOUR_GAME_ENTRY_POINT   0x001CF3C9  /* XBE entry point VA */
+#define YOUR_GAME_ENTRY_POINT   TS2_ENTRY_POINT  /* XBE entry point VA, this release's */
 /* Relative to the executable's own directory, build/<Config>/: the game
  * folder at the root of this repository. */
 #define YOUR_GAME_XBE_PATH      "..\\..\\game\\default.xbe"
@@ -511,7 +515,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
 
-    printf("=== TimeSplitters 2 - Static Recompilation ===\n");
+    printf("=== TimeSplitters 2 (%s) - Static Recompilation ===\n", TS2_REGION_NAME);
     printf("Loading XBE...\n");
 
     /* Install VEH handler (first handler in chain) */

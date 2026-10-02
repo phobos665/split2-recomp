@@ -438,16 +438,21 @@ void recomp_icall_not_code_log(uint32_t va, uint32_t saved_esp)
  * doorways, whole pieces of the level were missing and the sky showed
  * through the walls.
  *
- * The in-game camera is set up in one place, sub_00032DC0(near, far,
+ * The in-game camera is set up in one place, camera_setup(near, far,
  * aspect, fov_degrees). It turns the aspect into the screen's
  * (aspect * width / height), builds the projection from it with
- * sub_000E6E30(out, aspect, fovy, near, far), and stores tan(fov/2) at
+ * build_projection(out, aspect, fovy, near, far), and stores tan(fov/2) at
  * camera+0x31C and aspect * tan(fov/2) -- the horizontal half-width the
  * culling uses -- at camera+0x320. Widening the aspect argument on the
  * way in widens both, so what is drawn and what is kept agree.
  *
- * Only this camera: the other callers of sub_000E6E30 are the front end's
- * 3D (character select and the like), which is kept at 4:3.
+ * Only this camera: the other callers of build_projection are the front
+ * end's 3D (character select and the like), which is kept at 4:3.
+ *
+ * Names like camera_setup are the game's functions by what they do. Where
+ * each one is depends on the release: each release's
+ * config/<region>/overrides.inc wraps its own with the hooks in this file
+ * (see the end of it), so nothing in this file is an address.
  */
 /* xboxrecomp src/d3d/d3d8_xbox.h */
 extern float xbox_D3D8ClaimHorPlus(void);
@@ -473,15 +478,14 @@ static float ts2_camera_widen(void)
 /* What the frame now being drawn has run, for the choice below. */
 static int g_ts2_frame_camera, g_ts2_frame_front_end;
 
-extern void sub_00032DC0_gen(void);
-void sub_00032DC0(void)
+static void ts2_camera_setup(void (*camera_setup)(void))
 {
     float widen = ts2_camera_widen();
 
     if (widen != 1.0f)
         TS2_MEMF(g_esp + 0x0C) *= widen;   /* [esp] is the return address */
-    sub_00032DC0_gen();
-    g_ts2_frame_camera = 1;                /* see sub_001CC530 below */
+    camera_setup();
+    g_ts2_frame_camera = 1;                /* see ts2_present below */
 }
 
 /*
@@ -494,26 +498,25 @@ void sub_00032DC0(void)
  *
  * Which screen a frame belongs to, traced frame by frame through a run:
  *
- *   menus, story level select   in-game camera + sub_0009F1C0
+ *   menus, story level select   in-game camera + front_end_scene
  *   in-engine cutscenes         in-game camera
  *   playing                     in-game camera
  *   loading screens             neither
  *
- * sub_0009F1C0 sets up the front end's own 3D scene (it builds its camera
- * through sub_00095CE0). The front end draws its backdrop through the
+ * front_end_scene sets up the front end's own 3D scene (it builds a
+ * camera of its own). The front end draws its backdrop through the
  * in-game camera as well, hence the pair.
  *
- * sub_001CC530 is the game's once-a-frame present (it calls
+ * present is the game's once-a-frame present (it calls
  * D3DDevice_Swap). After a frame is presented, the next is given the shape
  * the finished one called for: a frame's own draws are not all in yet
  * when it starts, and a screen lasts many frames, so the only cost is one
  * frame at each change, which falls on a fade or a load.
  */
-extern void sub_0009F1C0_gen(void);
-void sub_0009F1C0(void)
+static void ts2_front_end_scene(void (*front_end_scene)(void))
 {
     g_ts2_frame_front_end = 1;
-    sub_0009F1C0_gen();
+    front_end_scene();
 }
 
 /*
@@ -548,8 +551,7 @@ static int ts2_menus_wide(void)
  */
 extern void xbox_D3D8SetInterpRegisters(int projection, int affine_first, int affine_count);
 
-extern void sub_001CC530_gen(void);
-void sub_001CC530(void)
+static void ts2_present(void (*present)(void))
 {
     static int interp_said;
 
@@ -557,7 +559,7 @@ void sub_001CC530(void)
         interp_said = 1;
         xbox_D3D8SetInterpRegisters(60, 64, 12);
     }
-    sub_001CC530_gen();
+    present();
     xbox_D3D8SetWideFrames(ts2_menus_wide() ||
                            (g_ts2_frame_camera && !g_ts2_frame_front_end));
     g_ts2_frame_camera = g_ts2_frame_front_end = 0;
@@ -574,21 +576,21 @@ void sub_001CC530(void)
  * guess changes as things animate: the menu header juddered between the two.
  *
  * The code that drew a piece says what it is, the same way every frame. All
- * of the game's 2D reaches the GPU through one call, sub_001C9265(primitive,
+ * of the game's 2D reaches the GPU through one call, reserve(primitive,
  * format, ?, count), which reserves vertices in the engine's batch for the
- * caller to fill; sub_001C9CDF flushes the batch to DrawVertices. So:
+ * caller to fill; flush sends the batch to DrawVertices. So:
  *
  *   - the reservation is wrapped, and reads its caller from the guest stack
  *     (a lifted call pushes the real return address first);
  *   - the engine's shared drawing functions above it are wrapped too, so a
  *     piece drawn through one is credited to the UI code that called it --
  *     the *site* is the caller of the outermost wrapped function;
- *   - k_ts2_ui_places below says where each known site goes; unknown ones
+ *   - k_ts2_ui_places says where each known site goes; unknown ones
  *     are left to the renderer (AUTO), exactly as before;
  *   - a reservation whose placement differs from the batch's flushes the
  *     batch first; the renderer is given the batch's placement as soon as
  *     anything is queued (the engine draws the batch by more than one way),
- *     and sub_001C9CDF resets it once the batch is drawn, so a draw that
+ *     and flush resets it once the batch is drawn, so a draw that
  *     never went through the batch (the glow passes, a movie) does not
  *     inherit a menu's placement.
  *
@@ -616,117 +618,20 @@ extern int  recomp_config_bool(const char *env_name, const char *key, int fallba
 
 typedef struct Ts2UiPlace { uint32_t site; int placement; } Ts2UiPlace;
 
-/* Where TimeSplitters 2 (PAL, this XBE) draws what. Sites are return
- * addresses in the game's UI code. Ends at site 0.
+/* Where the game draws what: each release's own table, in its
+ * config/<region>/overrides.inc. Sites are return addresses in the game's
+ * UI code, so they differ between releases. Ends at site 0.
  *
  * Built from the front end, screen by screen: frames captured with
  * RECOMP_TS2_UI_SITES=1, each site drawn alone and each left out with
  * d3d8_replay --each-tag / --each-tag-hidden, and the table tried on the
- * captures with --place before it went in here. The rule: whatever covers
+ * captures with --place before it went in. The rule: whatever covers
  * the screen spans the picture, the side decorations and the header's
  * left and right ends go to the edges of it, and everything a player
  * reads stays in proportion in the middle. A full-screen pass left to the
  * renderer's width guess was sometimes kept at 4:3, and its edge showed
  * as a seam down both old borders on every screen. */
-static const Ts2UiPlace k_ts2_ui_places[] = {
-    /* Full-screen quads, fades and post passes (the glow over the frame). */
-    { 0x000224CA, TS2_UI_STRETCH }, { 0x000224F3, TS2_UI_STRETCH },
-    { 0x00022520, TS2_UI_STRETCH }, { 0x00022548, TS2_UI_STRETCH },
-    { 0x00022635, TS2_UI_STRETCH }, { 0x00022650, TS2_UI_STRETCH },
-    { 0x0002266B, TS2_UI_STRETCH }, { 0x0002268A, TS2_UI_STRETCH },
-    { 0x000CA02A, TS2_UI_STRETCH }, { 0x000CA2C1, TS2_UI_STRETCH },
-    { 0x000CA52A, TS2_UI_STRETCH },
-    /* Backdrop: the tunnel ring, the title screen's nebula, the footer. */
-    { 0x000887E3, TS2_UI_STRETCH }, { 0x000B85C9, TS2_UI_STRETCH },
-    { 0x0008990F, TS2_UI_STRETCH },
-    /* Header banner and the rules under and below it. */
-    { 0x00089714, TS2_UI_STRETCH }, { 0x000897AE, TS2_UI_STRETCH },
-    { 0x0008985F, TS2_UI_STRETCH }, { 0x0008988A, TS2_UI_STRETCH },
-    { 0x000898B2, TS2_UI_STRETCH }, { 0x00089937, TS2_UI_STRETCH },
-    /* Left edge: the scrolling binary, the logo and the screen's name
-     * beneath it, the button hints. */
-    { 0x000885C5, TS2_UI_LEFT }, { 0x0008861D, TS2_UI_LEFT },
-    { 0x00089836, TS2_UI_LEFT }, { 0x000899C5, TS2_UI_LEFT },
-    { 0x000F0415, TS2_UI_LEFT },
-    /* Right edge: the purple glow. */
-    { 0x000889D2, TS2_UI_RIGHT },
-    /* Kept in proportion: panels, their glow and selection bar, menu
-     * items, the title logo, the level name, the loading picture. The glow
-     * (000EF824) is the panel's shadow as well as its rays, so it stays
-     * with the panel; on the story screens, where the panel is at the
-     * right, its rays end at the old edge. */
-    { 0x000EF824, TS2_UI_CENTRE }, { 0x000EF43A, TS2_UI_CENTRE },
-    { 0x000EEF97, TS2_UI_CENTRE }, { 0x000F0106, TS2_UI_CENTRE },
-    { 0x000EE789, TS2_UI_CENTRE }, { 0x000EE804, TS2_UI_CENTRE },
-    { 0x000EE7E8, TS2_UI_CENTRE }, { 0x000EE7C8, TS2_UI_CENTRE },
-    { 0x000EE7A4, TS2_UI_CENTRE }, { 0x000EEA4D, TS2_UI_CENTRE },
-    { 0x000F198A, TS2_UI_CENTRE }, { 0x000F1A16, TS2_UI_CENTRE },
-    { 0x00088FD3, TS2_UI_CENTRE }, { 0x000890BB, TS2_UI_CENTRE },
-    { 0x000EFE57, TS2_UI_CENTRE }, { 0x00089D55, TS2_UI_CENTRE },
-    { 0x001A213B, TS2_UI_CENTRE }, { 0x00089606, TS2_UI_CENTRE },
-
-    /* Arcade screens: the hex backdrop, the level list's pictures, the
-     * character select (portraits, name, stats, the picture of the one
-     * chosen), the panel's corners and scroll arrow, and the row of
-     * player figures at the bottom right, opposite the button hints. */
-    { 0x000A5085, TS2_UI_STRETCH },
-    { 0x0008A402, TS2_UI_CENTRE }, { 0x0008F837, TS2_UI_CENTRE },
-    { 0x0008F9B5, TS2_UI_CENTRE }, { 0x0008FA26, TS2_UI_CENTRE },
-    { 0x0008FC23, TS2_UI_CENTRE }, { 0x001B747A, TS2_UI_CENTRE },
-    { 0x001B74C3, TS2_UI_CENTRE }, { 0x001B74FF, TS2_UI_CENTRE },
-    { 0x000EE82A, TS2_UI_CENTRE }, { 0x000EE846, TS2_UI_CENTRE },
-    { 0x000F065F, TS2_UI_CENTRE },
-    { 0x0008E98D, TS2_UI_RIGHT },
-
-    /* In-game HUD, from an Arcade match: the rank badge in the top left
-     * corner, the radar in the top right, each hand's ammo at its own
-     * bottom corner (one piece of code draws both, hence SIDE), the kill
-     * message and the crosshair in the middle. The health and armour arcs
-     * are one ellipse framing the view, so it spans the picture. */
-    { 0x000BCF3E, TS2_UI_LEFT },   { 0x000BCFAE, TS2_UI_LEFT },
-    { 0x000BD129, TS2_UI_LEFT },
-    { 0x000BFDBE, TS2_UI_RIGHT },  { 0x000BFFD4, TS2_UI_RIGHT },
-    { 0x000C0033, TS2_UI_RIGHT },  { 0x000C0274, TS2_UI_RIGHT },
-    { 0x000C0324, TS2_UI_RIGHT },  { 0x000C043F, TS2_UI_RIGHT },
-    { 0x000BE66C, TS2_UI_SIDE },   { 0x000BEE57, TS2_UI_SIDE },
-    /* The dark backing drawn under each ammo number, from its own call
-     * site: left to the width guess it stayed in the 4:3 layout, beside
-     * the bars, while the number went to the corner. */
-    { 0x000BE63F, TS2_UI_SIDE },
-    { 0x000BC31C, TS2_UI_CENTRE }, { 0x00058670, TS2_UI_CENTRE },
-    { 0x000C933F, TS2_UI_STRETCH },
-    /* Sprites the game places in the world and projects to the screen
-     * itself (the brazier's flame, muzzle flashes): they were projected
-     * through the widened camera, so they are already where the 3D is and
-     * squeezing them would pull them off it. */
-    { 0x001C021F, TS2_UI_STRETCH }, { 0x001BEBBE, TS2_UI_STRETCH },
-    { 0x001BEBF4, TS2_UI_STRETCH }, { 0x001BED57, TS2_UI_STRETCH },
-    /* The handheld's map. It is drawn at the start of the frame into a
-     * corner of the back buffer (x 128 on, scissored to 128..309 by
-     * 0..181), copied out of it with CopyRects into the 128x128 texture the
-     * handheld's screen shows, and the screen is then cleared for the
-     * level. Whatever is drawn there has to stay at its own pixels, or
-     * widescreen's squeeze moves it out of the corner that is copied. */
-    { 0x000E6576, TS2_UI_STRETCH }, { 0x000E507E, TS2_UI_STRETCH },
-    { 0x000E5517, TS2_UI_STRETCH }, { 0x000E55E5, TS2_UI_STRETCH },
-    { 0x000E4888, TS2_UI_STRETCH }, { 0x000E4911, TS2_UI_STRETCH },
-    { 0x000E57F5, TS2_UI_STRETCH }, { 0x000E681C, TS2_UI_STRETCH },
-    /* Pause menu (in-game Start): the ring of health and armour arcs
-     * (sub_000D1E30, every page, through the same arc helper as the HUD's
-     * 000C933F) and the dark cap across its top. Left to the width guess,
-     * a piece of the ring the engine's batch cut off at less than 75% of
-     * the width -- the cut point moves frame to frame as the batch fills --
-     * was squeezed for that frame, and the arc flickered inward. */
-    { 0x000D1EEF, TS2_UI_STRETCH },
-    { 0x000CDAF0, TS2_UI_STRETCH }, { 0x000CDB16, TS2_UI_STRETCH },
-    /* Its backing: the dim, letterbox bars and rules, the blue backdrop.
-     * Always full width, so the guess got them right; set so they stay
-     * right under RECOMP_WIDESCREEN_2D=centre too. */
-    { 0x000CCB7F, TS2_UI_STRETCH }, { 0x000CCBA3, TS2_UI_STRETCH },
-    { 0x000CCBC7, TS2_UI_STRETCH }, { 0x000CCBF5, TS2_UI_STRETCH },
-    { 0x000CCC20, TS2_UI_STRETCH }, { 0x000CCAEE, TS2_UI_STRETCH },
-    { 0, TS2_UI_AUTO }
-};
+extern const Ts2UiPlace k_ts2_ui_places[];
 
 static Ts2UiPlace g_ts2_ui_extra[64];   /* RECOMP_TS2_UI_PLACE */
 static int        g_ts2_ui_extra_count;
@@ -742,7 +647,7 @@ static uint32_t g_ts2_batch_site;
 static int      g_ts2_host_place = -1;
 static uint32_t g_ts2_host_tag;
 /* Set while a reservation flushes ahead of itself: the flush must not reset
- * the renderer's placement then (sub_001C9265). */
+ * the renderer's placement then (ts2_ui_reserve). */
 static int      g_ts2_keep_host;
 
 static void ts2_ui_host_place(int place, uint32_t tag)
@@ -768,6 +673,15 @@ static int ts2_ui_parse_place(const char *s)
     if (!strncmp(s, "right", 5)) return TS2_UI_RIGHT;
     if (!strncmp(s, "side", 4)) return TS2_UI_SIDE;
     return TS2_UI_AUTO;
+}
+
+static int ts2_ui_table_size(void)
+{
+    int n = 0;
+
+    while (k_ts2_ui_places[n].site)
+        n++;
+    return n;
 }
 
 static int ts2_ui_mode(void)
@@ -800,7 +714,7 @@ static int ts2_ui_mode(void)
     if (g_ts2_ui_mode)
         fprintf(stderr, "[TS2-UI] 2D placement by call site: %d table entries, %d from "
                 "RECOMP_TS2_UI_PLACE%s\n",
-                (int)(sizeof k_ts2_ui_places / sizeof k_ts2_ui_places[0]) - 1,
+                ts2_ui_table_size(),
                 g_ts2_ui_extra_count, g_ts2_ui_mode == 2 ? "; tagging sites" : "");
     return g_ts2_ui_mode;
 }
@@ -841,16 +755,14 @@ static void ts2_ui_note_site(uint32_t site, uint32_t leaf)
 
 /* Run the batch flush from here. A lifted function returns with `ret`, so
  * it needs a return address on the guest stack to pop. */
-extern void sub_001C9CDF(void);
-static void ts2_ui_flush(void)
+static void ts2_ui_flush(void (*flush)(void))
 {
     g_esp -= 4;
     TS2_MEM32(g_esp) = 0;
-    sub_001C9CDF();
+    flush();
 }
 
-extern void sub_001C9265_gen(void);
-void sub_001C9265(void)
+static void ts2_ui_reserve(void (*reserve)(void), void (*flush)(void))
 {
     if (ts2_ui_mode()) {
         uint32_t leaf = TS2_MEM32(g_esp);
@@ -870,19 +782,19 @@ void sub_001C9265(void)
              * be pinned to neither. The renderer keeps the old placement
              * through the reservation below (see there). */
             g_ts2_keep_host = 1;
-            ts2_ui_flush();
+            ts2_ui_flush(flush);
             g_ts2_keep_host = 0;
         }
         /* The engine keeps more than one batch (by format, it seems), and
-         * sub_001C9CDF does not always draw the one that holds the last
-         * pieces: the reservation itself draws it, when the next piece does
-         * not fit it, by its own way (sub_001C967C calls the draw). So the
+         * flush does not always draw the one that holds the last pieces:
+         * the reservation itself draws it, when the next piece does not fit
+         * it, by its own way (a function under reserve calls the draw). So the
          * renderer holds the old batch's placement until that has happened,
          * and takes the new one after, for the pieces now queued -- whose
          * batch may be drawn by either way. Setting the new one first put
          * the right hand's ammo bars, the last piece before the next site,
          * under that site's placement and left them in the 4:3 layout. */
-        sub_001C9265_gen();
+        reserve();
         if (change) {
             g_ts2_batch_place = place;
             g_ts2_batch_site = site;
@@ -891,29 +803,29 @@ void sub_001C9265(void)
                           g_ts2_ui_mode == 2 ? g_ts2_batch_site : 0);
         return;
     }
-    sub_001C9265_gen();
+    reserve();
 }
 
-extern void sub_001C9CDF_gen(void);
-void sub_001C9CDF(void)
+static void ts2_ui_batch_flush(void (*flush)(void))
 {
     if (g_ts2_ui_mode <= 0) {
-        sub_001C9CDF_gen();
+        flush();
         return;
     }
     ts2_ui_host_place(g_ts2_batch_place, g_ts2_ui_mode == 2 ? g_ts2_batch_site : 0);
-    sub_001C9CDF_gen();
+    flush();
     /* The batch is empty again: a draw that never went through it (a glow
      * pass, a movie) must not inherit its placement -- unless a reservation
      * is flushing ahead of itself, when another batch may still be drawn
-     * under this placement (sub_001C9265). */
+     * under this placement (ts2_ui_reserve). */
     if (!g_ts2_keep_host)
         ts2_ui_host_place(TS2_UI_AUTO, 0);
 }
 
 /* The engine's shared drawing functions: the helpers that reserve vertices
  * for many callers (quads, sprites, text), and the ones above them that the
- * menu and HUD code call. Whoever called the outermost of them is the site. */
+ * menu and HUD code call. Whoever called the outermost of them is the site.
+ * Each release wraps its own: ts2_ui_enter(), the lifted body, ts2_ui_leave(). */
 static void ts2_ui_enter(void)
 {
     if (g_ts2_ui_mode > 0) {
@@ -929,59 +841,28 @@ static void ts2_ui_leave(void)
         g_ts2_depth--;
 }
 
-extern void sub_001B6290_gen(void);
-void sub_001B6290(void) { ts2_ui_enter(); sub_001B6290_gen(); ts2_ui_leave(); }
-extern void sub_001B6620_gen(void);
-void sub_001B6620(void) { ts2_ui_enter(); sub_001B6620_gen(); ts2_ui_leave(); }
-extern void sub_001C1328_gen(void);
-void sub_001C1328(void) { ts2_ui_enter(); sub_001C1328_gen(); ts2_ui_leave(); }
-extern void sub_001B5E80_gen(void);
-void sub_001B5E80(void) { ts2_ui_enter(); sub_001B5E80_gen(); ts2_ui_leave(); }
-extern void sub_001B58E0_gen(void);
-void sub_001B58E0(void) { ts2_ui_enter(); sub_001B58E0_gen(); ts2_ui_leave(); }
-extern void sub_001B6A20_gen(void);
-void sub_001B6A20(void) { ts2_ui_enter(); sub_001B6A20_gen(); ts2_ui_leave(); }
-extern void sub_001B7A00_gen(void);
-void sub_001B7A00(void) { ts2_ui_enter(); sub_001B7A00_gen(); ts2_ui_leave(); }
-extern void sub_001B56D0_gen(void);
-void sub_001B56D0(void) { ts2_ui_enter(); sub_001B56D0_gen(); ts2_ui_leave(); }
-extern void sub_00058360_gen(void);
-void sub_00058360(void) { ts2_ui_enter(); sub_00058360_gen(); ts2_ui_leave(); }
-extern void sub_001B5DA0_gen(void);
-void sub_001B5DA0(void) { ts2_ui_enter(); sub_001B5DA0_gen(); ts2_ui_leave(); }
-extern void sub_001B3ED0_gen(void);
-void sub_001B3ED0(void) { ts2_ui_enter(); sub_001B3ED0_gen(); ts2_ui_leave(); }
-extern void sub_000C4F80_gen(void);
-void sub_000C4F80(void) { ts2_ui_enter(); sub_000C4F80_gen(); ts2_ui_leave(); }
-extern void sub_001B79B0_gen(void);
-void sub_001B79B0(void) { ts2_ui_enter(); sub_001B79B0_gen(); ts2_ui_leave(); }
-extern void sub_001B7860_gen(void);
-void sub_001B7860(void) { ts2_ui_enter(); sub_001B7860_gen(); ts2_ui_leave(); }
-extern void sub_001B7950_gen(void);
-void sub_001B7950(void) { ts2_ui_enter(); sub_001B7950_gen(); ts2_ui_leave(); }
-extern void sub_000AA5F0_gen(void);
-void sub_000AA5F0(void) { ts2_ui_enter(); sub_000AA5F0_gen(); ts2_ui_leave(); }
-extern void sub_000AABF0_gen(void);
-void sub_000AABF0(void) { ts2_ui_enter(); sub_000AABF0_gen(); ts2_ui_leave(); }
-extern void sub_000AA670_gen(void);
-void sub_000AA670(void) { ts2_ui_enter(); sub_000AA670_gen(); ts2_ui_leave(); }
-extern void sub_00138FE0_gen(void);
-void sub_00138FE0(void) { ts2_ui_enter(); sub_00138FE0_gen(); ts2_ui_leave(); }
-extern void sub_001AB7C0_gen(void);
-void sub_001AB7C0(void) { ts2_ui_enter(); sub_001AB7C0_gen(); ts2_ui_leave(); }
-extern void sub_001AC790_gen(void);
-void sub_001AC790(void) { ts2_ui_enter(); sub_001AC790_gen(); ts2_ui_leave(); }
-extern void sub_001ACD50_gen(void);
-void sub_001ACD50(void) { ts2_ui_enter(); sub_001ACD50_gen(); ts2_ui_leave(); }
-extern void sub_001ACDD0_gen(void);
-void sub_001ACDD0(void) { ts2_ui_enter(); sub_001ACDD0_gen(); ts2_ui_leave(); }
-extern void sub_001ACE30_gen(void);
-void sub_001ACE30(void) { ts2_ui_enter(); sub_001ACE30_gen(); ts2_ui_leave(); }
-extern void sub_001ACE90_gen(void);
-void sub_001ACE90(void) { ts2_ui_enter(); sub_001ACE90_gen(); ts2_ui_leave(); }
-extern void sub_001AD150_gen(void);
-void sub_001AD150(void) { ts2_ui_enter(); sub_001AD150_gen(); ts2_ui_leave(); }
-extern void sub_001AD1D0_gen(void);
-void sub_001AD1D0(void) { ts2_ui_enter(); sub_001AD1D0_gen(); ts2_ui_leave(); }
-extern void sub_001B7520_gen(void);
-void sub_001B7520(void) { ts2_ui_enter(); sub_001B7520_gen(); ts2_ui_leave(); }
+/* ── TimeSplitters 2: where this release's functions are ─────── */
+
+/*
+ * Everything above is the same in every release of the game; where it
+ * attaches is not. config/<region>/overrides.inc, one per release, wraps
+ * that release's functions with the hooks above (its camera_setup with
+ * ts2_camera_setup, and so on) and holds its k_ts2_ui_places. Which release
+ * src/recomp/gen was lifted from is in src/recomp/ts2_region.h, which
+ * scripts/build.py writes with the lift.
+ *
+ * The lifter decides what not to generate by reading this file as text
+ * (xboxrecomp tools/recomp/manual_scan.py) and does not follow the #include
+ * below, so scripts/build.py hands it this file and the release's
+ * overrides.inc as one: each release's functions, and only those, are
+ * wrapped. A function goes into a release's overrides.inc only once it has
+ * been found in that release by what it does. A release that has not found
+ * one leaves its hook unused, and the lifted function runs as it is.
+ */
+#include "ts2_region.h"
+
+#if defined(TS2_REGION_PAL)
+#include "../config/pal/overrides.inc"
+#else
+#error "src/recomp/ts2_region.h names no release this file knows; lift with scripts/build.py"
+#endif
