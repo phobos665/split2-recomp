@@ -24,7 +24,7 @@
  *   Title:       TimeSplitters 2
  *   Title ID:    0x4553000A
  *   Base addr:   0x00010000
- *   Entry point: 0x001CF3C9 (PAL): TS2_ENTRY_POINT
+ *   Entry point: 0x001CF3C9 (PAL), 0x001CEF99 (USA): TS2_ENTRY_POINT
  *   Code size:   ~??? KB (.text)
  *   Sections:    ?? (list them)
  *   Kernel imports: ??

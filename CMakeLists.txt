@@ -41,8 +41,8 @@ if(NOT RECOMP_GEN_SOURCES)
     message(FATAL_ERROR "No generated sources in src/recomp/gen. "
         "Lift the game first: py -3 scripts/build.py")
 endif()
-# Which release of the game those were lifted from, written beside them by
-# scripts/build.py; src/main.c and src/recomp_manual.c include it.
+# Which release of the game those were lifted from (PAL, USA), written beside
+# them by scripts/build.py; src/main.c and src/recomp_manual.c include it.
 if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/recomp/ts2_region.h")
     message(FATAL_ERROR "src/recomp/ts2_region.h is missing: it names the release "
         "that was lifted. Run: py -3 scripts/build.py")

@@ -7,8 +7,8 @@
 The game's files go in game/ at the root of this repository (default.xbe and
 the rest of the disc), or pass --game DIR.
 
-default.xbe's SHA-1 says which release the disc is, and the addresses for it
-come from config/<region>/.
+Which release the disc is -- PAL or USA -- is read from default.xbe's SHA-1,
+and the addresses for it come from config/<region>/.
 """
 
 import argparse
@@ -47,6 +47,9 @@ RELEASES = {
     # began with. Its stage output stays where it always was.
     "2809eb147385723eaa90c425be89ee4db033fc5a":
         Release("pal", "PAL", ROOT / ".pipeline"),
+    # USA, certificate region 0x1, version 2, built 2002-10-01.
+    "3ec95fe3ae9e7794d83a5b489ad8583f352e0c18":
+        Release("us", "USA", ROOT / ".pipeline" / "us"),
 }
 
 
@@ -171,7 +174,7 @@ def main() -> int:
         if not args.region:
             return fail(f"this default.xbe (SHA-1 {digest}) is not a release this\n"
                         f"       repository has addresses for:\n{known}\n"
-                        f"       Please open an issue with the SHA-1. --region pal "
+                        f"       Please open an issue with the SHA-1. --region pal|us "
                         f"lifts it with one\n       of those releases' addresses "
                         f"anyway, which will most likely not work.")
         release = next(r for r in RELEASES.values() if r.region == args.region)

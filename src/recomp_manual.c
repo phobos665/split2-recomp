@@ -863,6 +863,8 @@ static void ts2_ui_leave(void)
 
 #if defined(TS2_REGION_PAL)
 #include "../config/pal/overrides.inc"
+#elif defined(TS2_REGION_US)
+#include "../config/us/overrides.inc"
 #else
 #error "src/recomp/ts2_region.h names no release this file knows; lift with scripts/build.py"
 #endif

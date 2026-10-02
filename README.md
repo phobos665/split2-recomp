@@ -16,8 +16,8 @@ controls. Other modes have not been tested yet.
 - [CMake](https://cmake.org/download/) 3.20 or newer, on PATH
 - Python 3.10 or newer, with `capstone`: `py -3 -m pip install capstone`
 - Git
-- **TimeSplitters 2, PAL release**, extracted from your disc. The build checks
-  `default.xbe` and warns if it is a different version; see
+- **TimeSplitters 2, PAL or USA release**, extracted from your disc. The build
+  reads `default.xbe` to tell which one it is, and stops if it is neither; see
   [Other versions](#other-versions).
 
 ## Build
@@ -83,10 +83,17 @@ built for 60 and some things may run fast or break.
 
 ## Other versions
 
-`config/seeds.json` and `config/xdk_symbols.json` are addresses inside the PAL
-`default.xbe`. An NTSC or other-revision disc will most likely need its own, and
-the build warns when the file differs. Please open an issue with the SHA-1 it
-printed.
+The build tells the releases apart by the SHA-1 of `default.xbe`:
+
+| Release | `default.xbe` SHA-1 | Addresses |
+| --- | --- | --- |
+| PAL | `2809eb147385723eaa90c425be89ee4db033fc5a` | `config/pal/` |
+| USA (NTSC) | `3ec95fe3ae9e7794d83a5b489ad8583f352e0c18` | `config/us/` |
+
+Each folder holds addresses inside that release's `default.xbe`: the seeds, the
+XDK symbols and the functions the game's own fixes attach to. Any other disc,
+such as the Japanese release or another revision, needs a folder of its own;
+the build stops and prints its SHA-1. Please open an issue with it.
 
 ## Updating
 
