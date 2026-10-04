@@ -548,6 +548,87 @@ static int ts2_menus_wide(void)
  */
 extern void xbox_D3D8SetInterpRegisters(int projection, int affine_first, int affine_count);
 
+/*
+ * The post-process pass (xboxrecomp d3d8_postfx.c, RECOMP_POSTFX=cel) inks
+ * and bands the 3D world, so it has to run after the world and before the
+ * HUD, the subtitles and the pause menu: outlined, banded text cannot be
+ * read. All of TS2's 2D is reserved through sub_001C9265 (see the
+ * placement table below), so the first reservation of a frame is where its
+ * world ends -- with two exceptions, both by call site:
+ *
+ *   - sprites the game projects into the world itself (glows on lamps,
+ *     flames, muzzle flashes) are 2D but belong to the world. One of them,
+ *     0x001B06BF, comes before the first-person weapon, and marking there
+ *     left the weapon without ink;
+ *   - the handheld's map is drawn at the very start of the frame, into a
+ *     corner of the back buffer that is copied out before the level;
+ *   - the glow over the frame (a copy of the screen added back, doubled) is
+ *     part of the picture the pass grades. Graded before the glow, every
+ *     brightening the pass made was doubled and tinted after it.
+ *
+ * host_PostFxScene arms the pass at the first reservation from any other
+ * site, after drawing what the batch already holds; the toolkit runs it at
+ * the next 2D draw that follows 3D. It is recorded, so frame
+ * interpolation's redrawn frames and captures run it at the same point.
+ *
+ * Only in-game frames are marked: the in-game camera and not the front
+ * end's scene. A frame's flags are not all in at its first 2D, so the
+ * verdict is the one the frame before reached; a screen lasts many frames
+ * and the one frame late falls on a fade. Menus and loading screens get no
+ * pass at all (xbox_D3D8PostFxMarksFrames). An in-game frame that drew no
+ * 2D (a cutscene shot) is marked at its present, so the look holds.
+ */
+extern void host_PostFxScene(void);
+extern void xbox_D3D8PostFxMarksFrames(int on);
+extern void xbox_D3D8PostFxSetDefaults(const char *params);
+
+/* TS2's tuning of the cel shader, chosen on Siberia frames toward the cover
+ * art and XIII: four light bands with a soft edge, texture kept at 65%
+ * contrast, 2.5-pixel ink (in 640x480 pixels), and Siberia's cold, dark
+ * grade brightened, made more colourful and warmed toward ochre. The
+ * player's postfx_params still wins. */
+static const char k_ts2_cel[] =
+    "bands=4,softness=0.15,detail=0.65,saturation=1.2,light_radius=6,"
+    "shade_floor=0.12,hatch=0,ink_width=2.5,lift=0.6,vibrance=1.1,warmth=0.6";
+
+static int g_ts2_prev_in_game, g_ts2_marked;
+
+static int ts2_frame_in_game(void)
+{
+    return g_ts2_frame_camera && !g_ts2_frame_front_end && g_ts2_prev_in_game;
+}
+
+static void ts2_postfx_mark(void)
+{
+    if (g_ts2_marked || !ts2_frame_in_game())
+        return;
+    g_ts2_marked = 1;
+    host_PostFxScene();
+}
+
+/* 2D that is not where the world ends (see above). */
+static int ts2_site_in_world(uint32_t site)
+{
+    static const uint32_t k_sites[] = {
+        /* projected sprites */
+        0x001B06BF, 0x001C021F, 0x001BEBBE, 0x001BEBF4, 0x001BED57,
+        /* the glow over the frame: a copy of the screen added back, tinted
+         * and doubled. Before it, the pass's colour was amplified and warmed
+         * by it (cream snow); after it, the pass's grade is the last word */
+        0x000224CA, 0x000224F3, 0x00022520, 0x00022548,
+        0x00022635, 0x00022650, 0x0002266B, 0x0002268A,
+        /* the handheld's map, as in the placement table */
+        0x000E6576, 0x000E507E, 0x000E5517, 0x000E55E5,
+        0x000E4888, 0x000E4911, 0x000E57F5, 0x000E681C,
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof k_sites / sizeof k_sites[0]; i++)
+        if (k_sites[i] == site)
+            return 1;
+    return 0;
+}
+
 extern void sub_001CC530_gen(void);
 void sub_001CC530(void)
 {
@@ -556,11 +637,15 @@ void sub_001CC530(void)
     if (!interp_said) {
         interp_said = 1;
         xbox_D3D8SetInterpRegisters(60, 64, 12);
+        xbox_D3D8PostFxMarksFrames(1);
+        xbox_D3D8PostFxSetDefaults(k_ts2_cel);
     }
+    ts2_postfx_mark();                     /* no 2D this frame: before the swap */
     sub_001CC530_gen();
     xbox_D3D8SetWideFrames(ts2_menus_wide() ||
                            (g_ts2_frame_camera && !g_ts2_frame_front_end));
-    g_ts2_frame_camera = g_ts2_frame_front_end = 0;
+    g_ts2_prev_in_game = g_ts2_frame_camera && !g_ts2_frame_front_end;
+    g_ts2_frame_camera = g_ts2_frame_front_end = g_ts2_marked = 0;
 }
 
 /* ── TimeSplitters 2: where each piece of 2D goes in widescreen ── */
@@ -776,7 +861,10 @@ static int ts2_ui_mode(void)
 
     if (g_ts2_ui_mode >= 0)
         return g_ts2_ui_mode;
-    g_ts2_ui_mode = recomp_config_bool("RECOMP_WIDESCREEN", "widescreen", 0) ? 1 : 0;
+    /* On whatever the settings: the post-process pass needs each batch's
+     * site (ts2_postfx_mark). Without widescreen the renderer ignores the
+     * placements, so the only change is a batch split where they differ. */
+    g_ts2_ui_mode = 1;
     v = getenv("RECOMP_TS2_UI_SITES");
     if (v && *v && strcmp(v, "0") != 0)
         g_ts2_ui_mode = 2;
@@ -862,6 +950,14 @@ void sub_001C9265(void)
 
         if (g_ts2_ui_mode == 2)
             ts2_ui_note_site(site, leaf);
+        if (!g_ts2_marked && ts2_frame_in_game() && !ts2_site_in_world(site)) {
+            /* The world ends here (see ts2_postfx_mark). What the batch
+             * holds -- a projected sprite -- is drawn first, as world. */
+            g_ts2_keep_host = 1;
+            ts2_ui_flush();
+            g_ts2_keep_host = 0;
+            ts2_postfx_mark();
+        }
         if (change) {
             /* The queue holds another site's pieces: draw them under their
              * own placement before this one's join it. A SIDE site's pieces

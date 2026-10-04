@@ -18,6 +18,7 @@ Estimates are working time; calendar time will be longer. They date from
 | Launcher mouse input | Toolkit | Arrow hit boxes match what is drawn (xboxrecomp #24) |
 | Variable refresh rate | Toolkit | Borderless fullscreen (Alt+Enter), VRR presents on both renderers; launcher rows Fullscreen and Variable refresh rate (xboxrecomp #29) |
 | Frame interpolation | Both | `frame_interp = 2..4` (launcher row): 120+ frames a second shown while the game runs at 60. TS2 names its matrix registers (c60 projection, c64-c75 model-view and bones) in `src/recomp_manual.c`. See below |
+| Cel shading | Both | `postfx = cel` (launcher row "Cel shading", F8 in game): ink outlines from depth and banded, warmed colour on the 3D world, the HUD left alone. The toolkit's pass is `xboxrecomp/src/d3d/d3d8_postfx.c`; TS2 says where its world ends and supplies its tuning (`k_ts2_cel`). See below |
 
 ### Widescreen leftovers
 
@@ -44,6 +45,37 @@ How to survey a screen: F11 with `RECOMP_TS2_UI_SITES=1` set, then
 `d3d8_replay --each-tag` / `--each-tag-hidden` on the capture and
 `--place <site>=<placement>` to try a placement before it goes into
 `src/recomp_manual.c`.
+
+### Cel shading
+
+How TS2 drives the toolkit's pass (`src/recomp_manual.c`, beside the
+present wrapper):
+
+- **Where the world ends.** The pass runs at the first 2D after the 3D
+  world, armed from the 2D batcher (`sub_001C9265`) by call site. Some 2D
+  is part of the world and must not arm it: projected sprites (lamp glows,
+  muzzle flashes; `0x001B06BF` comes before the first-person weapon), the
+  handheld's map (drawn into the back buffer before the level), and the
+  glow over the frame (`0x000224CA`..`0x0002268A`). Graded before the
+  glow, every brightening was doubled and tinted by it: the snow went
+  cream. The list is `ts2_site_in_world`.
+- **3D after the pass** (the weapon) gets a run of its own over only the
+  pixels whose depth it changed; the toolkit does that.
+- **Only in-game frames.** Menus, loading screens and the front end get
+  no pass (`xbox_D3D8PostFxMarksFrames`).
+- **Tuning** was chosen on Siberia with two comparison pages built from
+  frame captures: Medium shading (4 bands), 2.5-pixel ink, Rich colour,
+  Warm. The player's `postfx_params` overrides any of it.
+
+Leftovers:
+
+- Pale ground snow still takes some warmth; raise `warmth`'s white
+  threshold or drop `warmth` if it bothers.
+- Each run is four full-screen passes; with frame interpolation the
+  redraw went from about 0.6 to 1.3-2.4 ms, so more in-between frames
+  miss their moment. A cheaper light estimate would win most of it back.
+- Not yet looked at: other levels, Arcade maps, split screen, explosions
+  and fire, the pause menu over a level.
 
 ## Candidates
 
