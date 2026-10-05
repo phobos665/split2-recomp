@@ -11,3 +11,6 @@ build/
 *.log
 *.d3dcap
 __pycache__/
+
+# A local mod folder for testing (RECOMP_MODS_DIR); mods are the player's own.
+mods/

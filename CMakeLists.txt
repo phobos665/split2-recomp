@@ -42,9 +42,15 @@ if(NOT RECOMP_GEN_SOURCES)
         "Lift the game first: py -3 scripts/build.py")
 endif()
 
+# The game's overrides, one subsystem to a file. The lifter scans this folder
+# as well as recomp_manual.c (xboxrecomp manual_scan.py), so what is defined
+# here is not generated; CONFIGURE_DEPENDS so a new file needs no re-configure.
+file(GLOB TS2_OVERRIDE_SOURCES CONFIGURE_DEPENDS "src/overrides/*.c")
+
 add_executable(${PROJECT_NAME} WIN32
     src/main.c
     src/recomp_manual.c
+    ${TS2_OVERRIDE_SOURCES}
     ${RECOMP_GEN_SOURCES}
 )
 

@@ -24,8 +24,8 @@ planned enhancement. TS2's share of it:
 
 | Enhancement | TS2's part |
 | --- | --- |
-| Widescreen | Done: the in-game camera is widened where it is built (`sub_00032DC0`), and the front end and HUD are placed by call site (`k_ts2_ui_places` in `src/recomp_manual.c`). Leftovers are in `docs/enhancements.md` |
-| Frame rate above 60 | Done by presenting above it: the toolkit's frame interpolation (`frame_interp`) draws the in-between frames while logic stays at 60. TS2 names its matrix registers (c60 projection, c64-c75) at its first present, `sub_001CC530` in `src/recomp_manual.c`. Leftovers are in `docs/enhancements.md` |
+| Widescreen | Done: the in-game camera is widened where it is built (`sub_00032DC0`), and the front end and HUD are placed by call site (`k_ts2_ui_places` in `src/overrides/ui_placement_table.c`). Leftovers are in `docs/enhancements.md` |
+| Frame rate above 60 | Done by presenting above it: the toolkit's frame interpolation (`frame_interp`) draws the in-between frames while logic stays at 60. TS2 names its matrix registers (c60 projection, c64-c75) at its first present, `sub_001CC530` in `src/overrides/camera_and_present.c`. Leftovers are in `docs/enhancements.md` |
 | Online play | TS2 has system link (LAN) and no Xbox Live. Once the toolkit tunnels system link, little should be left to do here |
 | Mods | Assets are in `data/*.pak`. Naming dumped textures by pak entry is this repo's job; the dump and replace is the toolkit's |
 | Cutscene skip | In-engine cutscenes: find where they start and whether the game already has a skip |
@@ -72,7 +72,11 @@ toolkit's exit trace) name the caller if it happens again.
 CMakeLists.txt          the executable and the launcher, on top of xboxrecomp
 scripts/build.py        lift (first time or --relift), then configure and build
 src/main.c              the host entry point, from xboxrecomp/templates/new-game
-src/recomp_manual.c     hand-written overrides of lifted functions
+src/recomp_manual.c     recomp_lookup_manual and the ICALL diagnostics (toolkit template)
+src/overrides/          the game's overrides of lifted functions, one subsystem a file
+src/ts2/                headers the overrides share (guest registers, memory, UI types)
+mods/                   a mod folder for testing: files overlay the disc  (ignored)
+tools/                  TS2 format tools: .pak archives, .xbt textures
 config/seeds.json       function entry points discovery cannot see
 config/xdk_symbols.json XDK function names in this XBE (for the D3D8 replacements)
 game/                   the disc, supplied by the user        (ignored)
@@ -91,7 +95,7 @@ overrides are fine.
 
 ```bash
 py -3 scripts/build.py                        # lift if needed, then build
-py -3 scripts/build.py --relift               # after changing seeds, symbols, recomp_manual.c or the toolkit
+py -3 scripts/build.py --relift               # after changing seeds, symbols, overrides or the toolkit
 py -3 scripts/build.py --relift --from disasm # new seeds are applied by the disassembler, so start there
 cmake --build build --config Release          # recompile only
 ```
@@ -119,10 +123,19 @@ watchpoint switches.
 
 ## Overrides and seeds
 
-- `src/recomp_manual.c` is the one place a lifted function is replaced. The
-  lifter reads it (`--exclude-manual`) and does not generate what it defines, so
-  a second override file gives duplicate symbols. **Write the reason beside every
-  override when you add it.**
+- A lifted function is replaced in `src/overrides/`, in the file for its
+  subsystem (a new subsystem gets a new file; CMake globs the folder). The
+  lifter scans that folder and `src/recomp_manual.c` together
+  (`--exclude-manual`, which `recompile.py` passes for both) and does not
+  generate what they define. One definition per function: a second is reported
+  by name at lift time and is a duplicate symbol at link. Overrides include
+  `ts2/ts2_guest.h` for the guest registers and memory. **Write the reason
+  beside every override when you add it.**
+- `src/recomp_manual.c` keeps `recomp_lookup_manual` and the ICALL diagnostics
+  from the toolkit template; TS2's own code does not go there.
+- Tuning that is a number in one of the game's tables is a patch file, not an
+  override: `mods/patches/*.json` (xboxrecomp `src/kernel/mod_patches.h`).
+  See `docs/modding.md`.
 - A new unresolved `[ICALL]` target becomes a seed:
   `py -3 -m tools.seed_from_log <log> <xbe> --functions ../.pipeline/disasm/functions.json --seeds ../config/seeds.json`,
   run from `xboxrecomp/`. Then rebuild with `--relift --from disasm`.
