@@ -81,6 +81,13 @@ In the launcher's Video tab, or in the settings file:
 "Off" for the frame cap lets the game run as fast as your PC can. The game was
 built for 60 and some things may run fast or break.
 
+## Mods
+
+A file in `build\Release\mods\` replaces the game file at the same path, and
+`mods\patches\*.json` can change numbers in the game's tables. Nothing in
+`game\` is edited. Tools for the game's archives and textures, and how to make a
+texture mod, are in [docs/modding.md](docs/modding.md).
+
 ## Other versions
 
 `config/seeds.json` and `config/xdk_symbols.json` are addresses inside the PAL

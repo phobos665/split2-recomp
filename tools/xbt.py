@@ -38,6 +38,7 @@ words may well describe exactly those.
 
 import argparse
 import csv
+import glob
 import hashlib
 import os
 import struct
@@ -274,7 +275,10 @@ def describe(path, x):
 
 def cmd_info(args):
     rc = 0
-    for p in args.files:
+    files = []
+    for f in args.files:   # cmd.exe and PowerShell pass *.xbt through
+        files.extend(sorted(glob.glob(f)) if any(c in f for c in "*?[") else [f])
+    for p in files:
         try:
             print(describe(p, Xbt(open(p, "rb").read())))
         except XbtError as exc:

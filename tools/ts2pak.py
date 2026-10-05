@@ -34,6 +34,7 @@ by name, and nothing here knows whether it would ever ask for a new one.
 """
 
 import argparse
+import glob
 import hashlib
 import os
 import struct
@@ -278,9 +279,20 @@ def cmd_pack(args):
           f"(original {len(pak.data)})")
 
 
+def _expand(patterns):
+    """Globs expanded here too: cmd.exe and PowerShell pass *.pak through."""
+    out = []
+    for p in patterns:
+        hits = sorted(glob.glob(p)) if any(c in p for c in "*?[") else [p]
+        if not hits:
+            raise PakError(f"no file matches {p}")
+        out.extend(hits)
+    return out
+
+
 def cmd_verify(args):
     ok = True
-    for p in args.pak:
+    for p in _expand(args.pak):
         data = open(p, "rb").read()
         try:
             pak = read_pak(data)
