@@ -6,6 +6,7 @@
  */
 #include "ts2/ts2_guest.h"
 #include "ts2/ts2_ui.h"
+#include "ts2/ts2_types.h"
 
 /* ── TimeSplitters 2: where each piece of 2D goes in widescreen ── */
 
@@ -180,7 +181,7 @@ extern void sub_001C9265_gen(void);
 void sub_001C9265(void)
 {
     if (ts2_ui_mode()) {
-        uint32_t leaf = TS2_MEM32(g_esp);
+        uint32_t leaf = ts2_args(Ts2Reserve2DArgs)->return_address;
         uint32_t site = g_ts2_depth ? g_ts2_chain[0] : leaf;
         int place = ts2_ui_place_for(site);
 

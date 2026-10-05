@@ -7,6 +7,7 @@
  * lifter the same way (manual_scan.py scans src/overrides/).
  */
 #include "ts2/ts2_guest.h"
+#include "ts2/ts2_types.h"
 
 /* ── TimeSplitters 2: the widescreen camera ───────────────── */
 
@@ -57,7 +58,7 @@ void sub_00032DC0(void)
     float widen = ts2_camera_widen();
 
     if (widen != 1.0f)
-        TS2_MEMF(g_esp + 0x0C) *= widen;   /* [esp] is the return address */
+        ts2_args(Ts2CameraSetupArgs)->aspect *= widen;
     sub_00032DC0_gen();
     g_ts2_frame_camera = 1;                /* see sub_001CC530 below */
 }
@@ -132,7 +133,8 @@ void sub_001CC530(void)
 
     if (!interp_said) {
         interp_said = 1;
-        xbox_D3D8SetInterpRegisters(60, 64, 12);
+        xbox_D3D8SetInterpRegisters(TS2_VS_PROJECTION, TS2_VS_MODELVIEW,
+                                    TS2_VS_MATRIX_COUNT);
     }
     sub_001CC530_gen();
     xbox_D3D8SetWideFrames(ts2_menus_wide() ||
