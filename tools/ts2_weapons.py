@@ -39,16 +39,19 @@ FIELDS = [  # (offset, type, name, status)
     (0x58, "f32", "unknown_58", "unknown"),
     (0x5C, "f32", "zoom_fov_max", "likely"),
     (0x78, "f32", "spawn_78", "unknown"),
-    (0x7C, "f32", "projectile_speed", "read"),
+    (0x7C, "f32", "power", "known"),
+    (0x12C, "f32", "power2", "likely"),
 ]
-# Status: "known" -- read by the code that uses it and confirmed by a patch;
-# "read" -- the code that reads it shows what it is (+0x7C: sub_00029DD0
-# spawns the projectile and scales the shot's direction by it; the values
-# fit, 30 for the rifles, 0.5 for rockets, 0.05 for flames); "likely" --
+# Status: "known" -- read by the code that uses it and confirmed by a patch
+# (+0x7C, "power": raising the Soviet S47's from 2 to 20 made its hits on
+# the player take 4.0 health instead of 0.6, 6 Oct 2026 -- not ten times, so
+# the game scales it on the way, and sub_00029DD0 also reads it when it
+# spawns the projectile, so it may set speed as well); "likely" --
 # the right shape on every weapon, not traced (+0x54/+0x5C: 17/4 on the
 # Sniper Rifle, 10/4 on the Vintage Rifle, 60/60 on weapons without a
-# scope); "unknown". The fire-mode block starts at +0x60: +0x78 and +0x7C
-# are its +0x18 and +0x1C.
+# scope); "unknown". Two fire-mode blocks of 0xB0 bytes, primary at +0x60
+# and secondary at +0x110: +0x78/+0x7C are the primary's +0x18/+0x1C, and
+# +0x12C is the secondary's power.
 
 
 class Xbe:

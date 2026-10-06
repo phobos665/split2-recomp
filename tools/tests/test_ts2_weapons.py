@@ -49,7 +49,7 @@ class WeaponsTest(unittest.TestCase):
         self.assertEqual(w["name"], "Sniper Rifle")
         self.assertEqual(w["clip"]["value"], 5)
         self.assertEqual(w["clip"]["address"], "0x002C461C")
-        self.assertEqual(w["projectile_speed"]["value"], 30.0)
+        self.assertEqual(w["power"]["value"], 30.0)
         self.assertIsNone(weapons[0]["name"])
 
     def test_cli_json(self):

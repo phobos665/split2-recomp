@@ -150,7 +150,7 @@ its name and the fields known so far, read from your own XBE (`--json` adds
 each field's address):
 
 ```text
-id name                      ammo_type  clip ... projectile_speed
+id name                      ammo_type  clip ... power
  6 Sniper Rifle                      4     5 ...               30
 23 Tommy Gun                         9    32 ...              2.5
 24 SBP90 Machinegun                  8    64 ...                3
@@ -159,9 +159,11 @@ id name                      ammo_type  clip ... projectile_speed
 `patches/sniper_rifle_clip_10.json` is a working example: copy it into
 `build/Release/mods/patches/` and the Sniper Rifle (weapon 6) holds 10
 rounds instead of 5. Any field's address is `0x002C3888 + id * 0x240 +`
-its offset. Clip sizes are confirmed by a patch; projectile speed by reading
-the code that spawns the shot; the scope zoom fields only by their shape.
-Damage is not in this record.
+its offset. Confirmed by patches: clip size, and power (`+0x7C`), which
+sets a shot's damage -- the Soviet S47's raised from 2 to 20 made its hits
+take 4.0 health from the player instead of 0.6, so the game scales it on the
+way rather than using it as it is. The player has 40 health. The scope zoom
+fields are known only by their shape.
 
 How the table was found, so the next table can be found the same way:
 

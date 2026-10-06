@@ -147,8 +147,20 @@ typedef struct Ts2Reserve2DArgs {
 #define TS2_PLAYER_WEAPON_OBJ   0x408  /* the current weapon's object */
 #define TS2_PLAYER_RESERVE      0xA2C  /* int32[type]: reserve ammunition */
 #define TS2_WEAPON_SNIPER_RIFLE 6
-#define TS2_WEAPON_FIRE         0x60   /* the fire-mode block sub_00029DD0 reads */
-#define TS2_WEAPON_PROJ_SPEED   0x7C   /* float: projectile speed (fire block +0x1C) */
+#define TS2_WEAPON_FIRE         0x60   /* primary fire-mode block, 0xB0 bytes */
+#define TS2_WEAPON_FIRE2        0x110  /* secondary fire-mode block */
+#define TS2_WEAPON_POWER        0x7C   /* float: primary power (fire block +0x1C) */
+
+/* Damage (6 Oct 2026). A character's health is a float at +0x19C, its
+ * maximum at +0x1A0 (the player: 40 of 40). sub_00053400 applies a hit: the
+ * hit record's +0x1C is the amount; armour (the victim's controller +0x10)
+ * takes what it can first. sub_00053EC0 scales the amount by 0.3
+ * (0x00220370) on the way. A weapon's power sets the amount: patching the
+ * Soviet S47's from 2 to 20 made its hits on the player take 4.0 instead of
+ * 0.6. The player's character is at 0x81456FD8 in the Siberia runs, and the
+ * HUD reaches it through [[0x00497340] + 0x1BC] + 0x218. */
+#define TS2_CHAR_HEALTH         0x19C  /* float */
+#define TS2_CHAR_HEALTH_MAX     0x1A0  /* float */
 
 /* Names. A pickup carries a weapon *type*, a second table: 42 records of
  * 72 bytes at 0x002CA5F0, whose first word is the name's string number in
