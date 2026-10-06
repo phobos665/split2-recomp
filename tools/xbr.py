@@ -44,13 +44,15 @@ world (on the ground, and in other characters' hands).
 
 replace_geometry() does not move anything TS2 wrote: it appends a new
 texture list and the new section 0 to the end of the file, points the header
-and mesh 0 at them, and clears mesh 0's other sections. The other meshes (the
-muzzle flashes) stay as they were.
+and mesh 0 at them, and clears mesh 0's other sections. Of the other meshes
+only the muzzle flashes stay: small see-through sections. Their solid parts
+(a magazine, a bolt, a rocket in the tube) are switched off.
 """
 
 import struct
 
 FLAG_RESTART = 0x8000
+FLASH_MAX_VERTICES = 24       # a see-through section this small is a muzzle flash
 ONE = 0x3F800000
 RECORD_TAIL = bytes.fromhex("000000402e301204000000000000")
 
@@ -178,4 +180,26 @@ def replace_geometry(data, texture_numbers, groups):
     struct.pack_into("<19I", out, m + 0x14, *vo)
     struct.pack_into("<HH", out, m + 0x60, *counts)
     struct.pack_into("<3I", out, m + 0x90, *fo)
+    # The other meshes are not only muzzle flashes: the S47's first-person
+    # model has a 300-vertex part and a 51-vertex part in meshes 1 and 2,
+    # the rocket launcher two 152-vertex ones. Switch off every other mesh's
+    # sections except small ones in sections 1 and 2 (the see-through
+    # section, where the flashes are: 8 to 20 vertices on the disc's guns).
+    # The draw routine skips a section whose strip table offset is 0.
+    for i in range(1, old.mesh_count):
+        at, ovo, _, ofo = old.mesh(i)
+        for sec in range(3):
+            if not ovo[sec]:
+                continue
+            n = 0
+            if ovo[5 + 5 * sec] and ovo[6 + 5 * sec]:
+                n = (ovo[6 + 5 * sec] - ovo[5 + 5 * sec]) // 16
+            if sec > 0 and n <= FLASH_MAX_VERTICES:
+                continue
+            ovo[sec] = 0
+            for k in range(4 + 5 * sec, 9 + 5 * sec):
+                ovo[k] = 0
+            ofo[sec] = 0
+        struct.pack_into("<19I", out, at + 0x14, *ovo)
+        struct.pack_into("<3I", out, at + 0x90, *ofo)
     return bytes(out)
