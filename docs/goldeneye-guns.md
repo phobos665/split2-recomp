@@ -122,12 +122,39 @@ not replaced yet; their TS2 samples are `SFX_RELOAD` (`reload22_01`, shared
 with weapon changes), `SFX_GUN_DRYFIRE01` and the shotgun's
 `SFX_SHOTGUN_COCK`.
 
-## Step 2b: the models (not started)
+## Step 2b: the models (done, 6 Oct 2026)
 
-* A `.xbr` writer, for static models only: a gun has no
-  skeleton, just parts. Each TS2 gun has three models (`_cl`, `_ph`,
-  `_promo`; probably first-person, pickup, and the menu's picture). The
-  GoldenEye models are small (156-388 triangles first-person, 46-65 pickup),
-  which suits that.
-* The first-person position (how the gun sits on screen) will need tuning per
-  gun; GoldenEye's weapon stats hold its own position, which is a start.
+```
+py -3 -m tools.ge_guns "n64/007 - GoldenEye (Europe).n64" --ts2-models game --mods build/Release/mods
+```
+
+writes `mods/data/xbob.pak` (models) and `mods/data/xbt.pak` (textures). In
+a TS2 gun, `<name>_ph.xbr` is the **first-person** model and `<name>_cl.xbr`
+the **world** one -- on the ground, dropped, and in other characters' hands
+(found by swapping them in the game); `_promo` is not replaced yet.
+
+* **Geometry:** `tools/xbr.py` gives the TS2 model new geometry without
+  moving anything TS2 wrote (the format is described at the top of that
+  file). The TS2 gun's own other parts (a magazine, a bolt, the rocket in
+  the tube) are switched off; only its small see-through muzzle flashes stay.
+* **Colour:** TS2 draws guns without vertex colour, so each colour GoldenEye
+  paints a material with becomes a tinted copy of the texture (the sniper's
+  scope is black that way). Every vertex gets one up normal: GoldenEye never
+  lit its guns, and face normals lit the low-poly models in patches.
+* **Placement:** first-person guns use one transform for all seven, as
+  GoldenEye does -- one scale plus GoldenEye's own per-gun position from its
+  weapon stats. World models are fitted to the TS2 model's box, barrel
+  turned to match.
+* **Every gun loads anywhere:** a level only holds the weapons placed in it,
+  and the game loads a weapon's model by name when first drawn -- for one the
+  level lacks it falls back to a loose disc file that does not exist and
+  crashes. So the archives also carry everything in TS2's `gun.pak`.
+
+**Testing:** in a level, **F8** or **both thumbsticks clicked** gives every
+weapon with 99 rounds (`src/overrides/give_all.c`). Checked in the game by
+the user: all seven guns look right after the TS2 parts were switched off.
+
+**Sounds, a second note.** TS2 plays only ADPCM `.xbs` (a 16-bit PCM one
+did not play), and GoldenEye's loud gunshots come through it at about 21 dB,
+grittier than the original; the encoder picks each block's best starting
+step, which gained 1-2 dB.
