@@ -1,8 +1,10 @@
 /*
  * give_all.c -- TimeSplitters 2: every weapon at once, for testing weapon mods.
  *
- * F8 in a level gives the player every named weapon with ammunition, so a
- * modded gun can be checked by cycling to it anywhere.
+ * F8 in a level, or both thumbsticks clicked together on the first pad,
+ * gives the player every named weapon with ammunition, so a modded gun can
+ * be checked by cycling to it anywhere. The pad is read straight from
+ * XInput, so the combination works whatever the input bindings say.
  * RECOMP_TS2_GIVE_ALL_AFTER=<frames> does the same once, that many frames
  * into the run, for scripted runs.
  *
@@ -21,6 +23,41 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+
+/* XInputGetState, loaded on first use: no link-time dependency here. */
+typedef struct { DWORD packet; WORD buttons; BYTE lt, rt; SHORT lx, ly, rx, ry; } pad_state;
+typedef DWORD (WINAPI *xinput_get_state)(DWORD, pad_state *);
+#define PAD_LEFT_THUMB  0x0040
+#define PAD_RIGHT_THUMB 0x0080
+
+static int sticks_clicked(void)
+{
+    static xinput_get_state get;
+    static int tried;
+    pad_state st;
+
+    if (!tried) {
+        HMODULE m;
+        tried = 1;
+        m = LoadLibraryA("xinput1_4.dll");
+        if (!m)
+            m = LoadLibraryA("xinput9_1_0.dll");
+        if (m)
+            get = (xinput_get_state)(void (*)(void))GetProcAddress(m, "XInputGetState");
+    }
+    static int wait;
+    if (!get || wait > 0) {
+        wait -= wait > 0;
+        return 0;
+    }
+    /* Asking for a pad that is not there can stall: after a miss, wait
+     * about two seconds before asking again. */
+    if (get(0, &st) != 0) {
+        wait = 120;
+        return 0;
+    }
+    return (st.buttons & (PAD_LEFT_THUMB | PAD_RIGHT_THUMB)) == (PAD_LEFT_THUMB | PAD_RIGHT_THUMB);
+}
 #endif
 
 #define TS2_PLAYER_HELD   0x998   /* int32[definition]: 1 = held */
@@ -68,7 +105,7 @@ void ts2_give_all_poll(void)
     if (after > 0 && frames == after)
         give_all();
 #ifdef _WIN32
-    now = (GetAsyncKeyState(VK_F8) & 0x8000) != 0 && GetForegroundWindow() != NULL;
+    now = (GetAsyncKeyState(VK_F8) & 0x8000) != 0 || sticks_clicked();
 #endif
     if (now && !down)
         give_all();
