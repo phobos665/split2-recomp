@@ -1,9 +1,10 @@
 """
-TimeSplitters 2 .pak archives: list, unpack, repack, verify.
+TimeSplitters 2 .pak archives: list, unpack, repack, create, verify.
 
     py -3 -m tools.ts2pak list   game/data/chr.pak
     py -3 -m tools.ts2pak unpack game/data/chr.pak out/chr
     py -3 -m tools.ts2pak pack   game/data/chr.pak out/chr_edited -o mods/data/chr.pak
+    py -3 -m tools.ts2pak create my_textures -o mods/data/xbt.pak
     py -3 -m tools.ts2pak verify game/data/chr.pak
 
 The game opens whole archives (\\Device\\CdRom0\\data\\chr.pak), so a mod that
@@ -25,6 +26,18 @@ The two layouts on the Xbox disc (magic in the first four bytes):
   P4CK  the rest
         header   +0 magic  +4 index offset  +8 index length  (+C reserved)
         entry    60 bytes: name[48] (NUL-padded), offset, length, unknown
+
+`create` writes a new P8CK archive from a folder, laid out as every P8CK
+archive on the disc is: data from 0x20, each file aligned to 16, the names
+table straight after the data and in the same order, then the index,
+aligned to 4 and sorted by name. The game relies on at least the order of
+the tables -- it reads the names and the index as one block from the names
+offset -- and an archive with the index before the names crashed its file
+lookup. What `create` does not copy is the order of the file data (the
+disc's is the original tool's own, not by name) and the twelve header bytes
+after +0x14 (leftover text there on every disc archive; zero here). It is
+how a mod makes data/xbt.pak, which src/overrides/archives.c puts before
+every level's archives.
 
 Little-endian, uncompressed. The P8CK header and entry order were checked
 against the PAL disc (xboxrecomp docs/technical/modding-models-textures.md);
@@ -242,6 +255,33 @@ def build_pak(pak, replacements=None):
     return bytes(out)
 
 
+def create_p8ck(files):
+    """A P8CK archive of [(name, bytes)], in the disc's own layout."""
+    files = sorted(files, key=lambda f: f[0])
+    names = [n.replace("\\", "/") for n, _ in files]
+    if len(set(names)) != len(names):
+        raise PakError("two files with the same name")
+    out = bytearray(0x20)
+    places = []
+    for (_, data) in files:
+        out += bytes(_align_up(len(out), 16) - len(out))
+        places.append((len(out), len(data)))
+        out += data
+    names_off = len(out)
+    table = bytearray()
+    name_offsets = []
+    for n in names:
+        name_offsets.append(len(table))
+        table += n.encode("latin-1") + b"\0"
+    out += table
+    out += bytes(_align_up(len(out), 4) - len(out))
+    index_off = len(out)
+    for (off, length), noff in zip(places, name_offsets):
+        out += P8_ENTRY.pack(noff, length, off)
+    struct.pack_into("<4sIIII", out, 0, b"P8CK", index_off, len(files), names_off, len(table))
+    return bytes(out)
+
+
 # ------------------------------------------------------------------ CLI
 
 def _safe_path(root, name):
@@ -299,6 +339,27 @@ def _expand(patterns):
     return out
 
 
+def _folder_files(folder):
+    files = []
+    for root, _, names in os.walk(folder):
+        for fn in names:
+            path = os.path.join(root, fn)
+            files.append((os.path.relpath(path, folder).replace(os.sep, "/"),
+                          open(path, "rb").read()))
+    return files
+
+
+def cmd_create(args):
+    files = _folder_files(args.folder)
+    if not files:
+        raise PakError(f"no files in {args.folder}")
+    out = create_p8ck(files)
+    os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
+    with open(args.output, "wb") as f:
+        f.write(out)
+    print(f"{args.output}: P8CK, {len(files)} file(s), {len(out)} bytes")
+
+
 def cmd_verify(args):
     ok = True
     for p in _expand(args.pak):
@@ -335,8 +396,13 @@ def main(argv=None):
                    help="ignore files identical to the original's (so a whole "
                         "unpacked folder can be given)")
     p.set_defaults(fn=cmd_pack)
+    p = sub.add_parser("create", help="a new P8CK archive from a folder, in the disc's layout")
+    p.add_argument("folder", help="files, by the path they should have inside the archive")
+    p.add_argument("-o", "--output", required=True)
+    p.set_defaults(fn=cmd_create)
     p = sub.add_parser("verify", help="rebuild with nothing replaced and compare")
     p.add_argument("pak", nargs="+")
+
     p.set_defaults(fn=cmd_verify)
     args = ap.parse_args(argv)
     try:

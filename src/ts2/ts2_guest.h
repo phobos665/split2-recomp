@@ -68,6 +68,7 @@ extern ptrdiff_t g_xbox_mem_offset;
 
 /* Guest memory at a guest address. */
 #define TS2_MEM32(a) (*(volatile uint32_t *)((uintptr_t)(uint32_t)(a) + g_xbox_mem_offset))
+#define TS2_MEM8(a) (*(volatile uint8_t *)((uintptr_t)(uint32_t)(a) + g_xbox_mem_offset))
 #define TS2_MEMF(a) (*(volatile float *)((uintptr_t)(uint32_t)(a) + g_xbox_mem_offset))
 
 /* The settings a player chooses (xboxrecomp src/config/recomp_config.h):

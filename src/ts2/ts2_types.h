@@ -80,4 +80,19 @@ typedef struct Ts2Reserve2DArgs {
     uint32_t count;
 } Ts2Reserve2DArgs;
 
+/* ── Archives ──────────────────────────────────────────────────────────
+ *
+ * sub_00085DB0(name, ?, 1) mounts one .pak (P4CK parsed there, P8CK in
+ * sub_00085C50) into the next free slot, or reuses the slot already holding
+ * that name; it returns the slot, which no caller keeps. sub_000865C0
+ * closes them all and mounts a level's set. sub_000860A0(name) finds a file:
+ * it drops a "host0:" prefix and searches the slots from 0, first match
+ * wins. Found reading the mount and lookup functions (6 Oct 2026);
+ * src/overrides/archives.c reorders the table. */
+#define TS2_PAK_COUNT       0x00358A18u   /* int32: slots in use */
+#define TS2_PAK_TABLE       0x00358A38u   /* the slots */
+#define TS2_PAK_SLOTS       25
+#define TS2_PAK_SLOT_SIZE   0x20
+#define TS2_PAK_SLOT_NAME   0x1C          /* guest pointer to the mounted name */
+
 #endif /* TS2_TYPES_H */

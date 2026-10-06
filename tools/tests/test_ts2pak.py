@@ -157,6 +157,34 @@ class CliTest(unittest.TestCase):
             self.assertEqual(pak.read(pak.entries[2]), b"D" * 4097)
             self.assertEqual(ts2pak.main(["verify", src, out]), 0)
 
+    def test_create_follows_the_disc_layout(self):
+        # The rules every P8CK on the PAL disc follows (checked 6 Oct 2026),
+        # which the game's own reader depends on: an index before the names
+        # crashed its file lookup.
+        files = [("textures/misc/b.xbt", b"B" * 33), ("textures/misc/a.xbt", b"A" * 7),
+                 ("ob/x.xbr", b"")]
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = os.path.join(tmp, "in")
+            for name, data in files:
+                path = os.path.join(folder, *name.split("/"))
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                open(path, "wb").write(data)
+            out = os.path.join(tmp, "mods", "data", "xbt.pak")
+            self.assertEqual(ts2pak.main(["create", folder, "-o", out]), 0)
+            d = open(out, "rb").read()
+        p = ts2pak.read_pak(d)
+        self.assertEqual({e.name: p.read(e) for e in p.entries}, dict(files))
+        self.assertEqual([e.name for e in p.entries], sorted(n for n, _ in files),
+                         "index sorted by name")
+        self.assertEqual(min(e.offset for e in p.entries), 0x20, "data from 0x20")
+        self.assertTrue(all(e.offset % 16 == 0 for e in p.entries), "files aligned to 16")
+        self.assertEqual(max(e.offset + e.length for e in p.entries), p.names_offset,
+                         "names straight after the data")
+        self.assertEqual(p.index_offset, (p.names_offset + p.names_len + 3) // 4 * 4,
+                         "index after the names, aligned to 4")
+        self.assertEqual(p.index_offset + 12 * len(files), len(d), "index last")
+        self.assertEqual(ts2pak.build_pak(p), d, "a created archive verifies")
+
     def test_unpack_refuses_escaping_names(self):
         with tempfile.TemporaryDirectory() as tmp:
             src = os.path.join(tmp, "bad.pak")

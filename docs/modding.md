@@ -31,16 +31,47 @@ Only files the game reads from the disc are overlaid, never saves. A folder in
 listing a folder is not seen. Mods replace files the game opens by name.
 
 TimeSplitters 2 keeps almost everything in archives under `data/` (`chr.pak`,
-`gun.pak`, `l_100.pak`, ...) and opens whole archives. So a mod that changes one
-texture is a rebuilt archive:
+`gun.pak`, `l_100.pak`, ...), opens whole archives, and copies shared textures
+into every level's archive (the B button is in 43 of them).
+
+### Textures: one file, `data/xbt.pak`
+
+The game also mounts `data/xbt.pak`, `data/xbob.pak` and `data/xbsound.pak`,
+which the disc does not have. As shipped they come last, so they could only
+add files; `src/overrides/archives.c` moves any that exist ahead of the
+level's archives, so a file in one of them replaces that file **everywhere**.
+A texture mod is then a folder of the textures you changed, packed into one
+small archive:
 
 ```bash
-py -3 -m tools.ts2pak unpack game/data/chr.pak work/chr
+py -3 -m tools.ts2pak unpack game/data/chr.pak work/chr     # any archive that has it
 py -3 -m tools.xbt to-dds work/chr/textures/0267.xbt work/0267.dds
 #   ... edit work/0267.dds in any editor that saves DXT1/DXT3/A8R8G8B8 DDS ...
-mkdir -p work/chr_edit/textures
 py -3 -m tools.xbt from-dds work/0267.dds work/chr/textures/0267.xbt \
-      -o work/chr_edit/textures/0267.xbt
+      -o mymod/textures/0267.xbt
+py -3 -m tools.ts2pak create mymod -o build/Release/mods/data/xbt.pak
+```
+
+Inside the folder, each file sits at its path inside the game's archives
+(`textures/misc/xbstdbutton1.xbt`). `create` writes the archive in the layout
+the game's reader expects. The log says when the override archive is in use:
+
+```text
+[TS2-PAK] an override archive (data/xbt.pak, xbob.pak or xbsound.pak) is mounted; ...
+```
+
+Checked 6 Oct 2026: a recoloured B button in `xbt.pak` showed on every screen
+the scripted run reached, the front end through Siberia's difficulty select.
+`xbob.pak` (models, by its name) and `xbsound.pak` are reordered the same way but
+not yet tested.
+
+### Rebuilding one archive
+
+To change a file in one archive only, or one that is not shared, rebuild that
+archive from the original:
+
+```bash
+mkdir -p work/chr_edit/textures
 py -3 -m tools.ts2pak pack game/data/chr.pak work/chr_edit -o build/Release/mods/data/chr.pak
 ```
 
@@ -179,14 +210,15 @@ What the mod test showed about the game:
 - **Every level archive carries its own copy of shared textures.** The
   button is in 43 archives; once the run loaded archives the mod had not
   replaced, the original came back. A texture mod by archive has to rebuild
-  every archive that holds the texture. The toolkit's planned hashed texture
-  replacement (`xboxrecomp/docs/technical/modding-models-textures.md`, T4/T5)
-  would need one file.
-- **The game looks for `data\xbt.pak`, `data\xbob.pak` and
-  `data\xbsound.pak`, which are not on the disc**, and carries on without
-  them. If they are override archives the game itself supports (textures,
-  objects, sounds), a mod could ship just one of them. Not tested yet.
+  every archive that holds the texture.
+- **The game mounts `data\xbt.pak`, `data\xbob.pak` and `data\xbsound.pak`,
+  which are not on the disc**, after everything else, so as shipped they
+  could only add files: a test `xbt.pak` was opened and indexed and never
+  drawn. `src/overrides/archives.c` now moves them to the front, and one
+  `xbt.pak` replaces a texture everywhere (see "Textures: one file" above).
+  A first `xbt.pak` with its index before its names crashed the game's file
+  lookup once it was searched first, which is why `ts2pak create` writes the
+  disc's layout.
 
-Next: test whether `data\xbt.pak` overrides textures; then the work that
-needs `default.xbe` -- find the tuning tables (weapons first) and name what
-is found in `ts2_types.h`.
+Next: the work that needs `default.xbe` -- find the tuning tables (weapons
+first) and name what is found in `ts2_types.h`.
