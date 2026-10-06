@@ -27,7 +27,7 @@ planned enhancement. TS2's share of it:
 | Widescreen | Done: the in-game camera is widened where it is built (`sub_00032DC0`), and the front end and HUD are placed by call site (`k_ts2_ui_places` in `src/overrides/ui_placement_table.c`). Leftovers are in `docs/enhancements.md` |
 | Frame rate above 60 | Done by presenting above it: the toolkit's frame interpolation (`frame_interp`) draws the in-between frames while logic stays at 60. TS2 names its matrix registers (c60 projection, c64-c75) at its first present, `sub_001CC530` in `src/overrides/camera_and_present.c`. Leftovers are in `docs/enhancements.md` |
 | Online play | TS2 has system link (LAN) and no Xbox Live. Once the toolkit tunnels system link, little should be left to do here |
-| Mods | The toolkit's mods folder overlays disc files and its patch files change table values; this repo has the `.pak` and `.xbt` tools (`tools/`) and `docs/modding.md`. Still to do here: find TS2's tuning tables in `default.xbe` and name them in `src/ts2/ts2_types.h` |
+| Mods | The toolkit's mods folder overlays disc files and its patch files change table values; this repo has the `.pak`, `.xbt` and weapon-table tools (`tools/`) and `docs/modding.md`. The weapon tables, damage and health are named in `src/ts2/ts2_types.h`. GoldenEye guns mod: `tools.ge_guns` extracts seven guns from the player's own GoldenEye cartridge (OBJ, PNG, WAV under `extracted/`, ignored); the TS2 side (`.xbs` encoder, `.xbr` writer) is next -- `docs/goldeneye-guns.md`. Nothing from either game is ever committed |
 | Cutscene skip | In-engine cutscenes: find where they start and whether the game already has a skip |
 
 **Working on the toolkit from here:** make the change in `xboxrecomp/` on a
@@ -76,7 +76,8 @@ src/recomp_manual.c     recomp_lookup_manual and the ICALL diagnostics (toolkit 
 src/overrides/          the game's overrides of lifted functions, one subsystem a file
 src/ts2/                headers the overrides share (guest registers, memory, UI types)
 mods/                   a mod folder for testing: files overlay the disc  (ignored)
-tools/                  TS2 format tools: .pak archives, .xbt textures
+tools/                  TS2 format tools: .pak archives, .xbt textures, weapon tables;
+                        ge_*: GoldenEye 007 ROM, model, sound readers (tools.ge_guns)
 config/seeds.json       function entry points discovery cannot see
 config/xdk_symbols.json XDK function names in this XBE (for the D3D8 replacements)
 game/                   the disc, supplied by the user        (ignored)

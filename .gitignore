@@ -14,3 +14,6 @@ __pycache__/
 
 # A local mod folder for testing (RECOMP_MODS_DIR); mods are the player's own.
 mods/
+
+# Assets extracted from your own copies of other games (tools.ge_guns); never commit them.
+extracted/

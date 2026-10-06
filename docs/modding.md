@@ -259,5 +259,7 @@ What the mod test showed about the game:
   lookup once it was searched first, which is why `ts2pak create` writes the
   disc's layout.
 
-Next: the work that needs `default.xbe` -- find the tuning tables (weapons
-first) and name what is found in `ts2_types.h`.
+Since then: the weapon tables are found and named (see "Weapons" above),
+with damage and health; and the first step of a mod that brings GoldenEye's
+guns over, from your own cartridge, is done -- `tools.ge_guns` extracts
+seven of them as OBJ, PNG and WAV. See [goldeneye-guns.md](goldeneye-guns.md).
