@@ -95,4 +95,27 @@ typedef struct Ts2Reserve2DArgs {
 #define TS2_PAK_SLOT_SIZE   0x20
 #define TS2_PAK_SLOT_NAME   0x1C          /* guest pointer to the mounted name */
 
+/* ── The player ─────────────────────────────────────────────────────────
+ *
+ * Found by RAM snapshots in Siberia (6 Oct 2026; RECOMP_INPUT_SEQ `snap`
+ * steps, one shot between each): the clip of the rifle picked up at the
+ * start counts 5, 4, 3, 2 at record +0x44C, and two .data globals point at
+ * the record. The record itself is on the heap (0x82B64FF0 in those runs).
+ *
+ * Measured across the pickup: +0x438 went from 35 to 6 and +0x44C from 0
+ * to 5, and +0x9B0 (0 -> 1) and +0xA3C (0 -> 5) changed together. Those
+ * last two are 0x8C bytes apart -- 35 dwords, the size of the game's
+ * weapon list -- so they read as two arrays with one entry per weapon
+ * ("held" and "reserve ammunition", by their values). 35 is the Temporal
+ * Uplink (the handheld map the player starts with) if the weapon names
+ * table (.data 0x00337BC4 in English) is counted from its blank first
+ * entry, which would make the rifle weapon 6 in the game's own numbering;
+ * that numbering is not confirmed yet. Not found yet: where a weapon's
+ * clip size and other tuning come from (not in the XBE as plain arrays of
+ * 35 small integers). */
+#define TS2_PLAYER_PTR          0x00356AA8u   /* guest pointer to the player record */
+#define TS2_PLAYER_PTR_2        0x004B1C60u   /* the same pointer, held a second time */
+#define TS2_PLAYER_WEAPON       0x438         /* int32: current weapon (see above) */
+#define TS2_PLAYER_CLIP         0x44C         /* int32: rounds in the current weapon */
+
 #endif /* TS2_TYPES_H */
