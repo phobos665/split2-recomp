@@ -150,4 +150,22 @@ typedef struct Ts2Reserve2DArgs {
 #define TS2_PLAYER_RESERVE      0xA2C  /* int32[type]: reserve ammunition */
 #define TS2_WEAPON_SNIPER_RIFLE 6
 
+/* ── Time ───────────────────────────────────────────────────────────────
+ *
+ * A tick engine (6 Oct 2026, reading sub_001AE3C0 and sub_001543E0, and two
+ * runs at 60 and 120 Hz guest vblank). Once a frame, sub_001AE3C0 sets the
+ * frame's step to the vblanks since the last frame (sub_001C85C0, kept at
+ * 0x40BE90), clamped to 1..3. The game clock adds it; each object on the
+ * update list (sub_001543E0) then steps by the clock minus its own last
+ * update (object +0x18), clamped to 5, written to the same step globals
+ * while it runs. Per-tick constants assume a 60 Hz tick: a 120 Hz vblank
+ * runs the game at double speed. src/overrides/frame_step.c experiments
+ * with fractional steps. */
+#define TS2_FRAME_VBLANKS       0x00348CE0u   /* int32: vblanks this frame, 1..3 */
+#define TS2_FRAME_STEP          0x00348CE4u   /* int32: ticks this step (frame or object) */
+#define TS2_FRAME_VBLANKS_F     0x00348CE8u   /* float copy of TS2_FRAME_VBLANKS */
+#define TS2_FRAME_STEP_F        0x00348CECu   /* float copy of TS2_FRAME_STEP; 0 = paused */
+#define TS2_GAME_CLOCK          0x004AD3E8u   /* int32: ticks */
+#define TS2_VBLANK_COUNT        0x0040BE90u   /* int32: vblanks, read each frame */
+
 #endif /* TS2_TYPES_H */
