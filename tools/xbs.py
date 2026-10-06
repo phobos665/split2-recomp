@@ -81,30 +81,45 @@ def decode(data):
     return rate, out
 
 
-def encode(samples, rate):
-    """Signed 16-bit samples to an .xbs at `rate` (the caller resamples).
+def _encode_block(chunk, index):
+    """One block from a starting step index: (bytes, squared error, end index).
     Each step picks the code whose result is nearest, against the decoder's
     own state, so the error does not build up."""
-    samples = list(samples)
+    predictor = chunk[0]
+    block = bytearray(struct.pack("<hBB", predictor, index, 0)) + bytearray(32)
+    err = 0
+    for n in range(SAMPLES - 1):
+        want = chunk[n + 1]
+        best = None
+        for code in range(16):
+            p, i = _step(code, predictor, index)
+            e = abs(p - want)
+            if best is None or e < best[0]:
+                best = (e, code, p, i)
+        e, code, predictor, index = best
+        err += e * e
+        block[4 + (n // 8) * 4 + (n % 8) // 2] |= code << ((n & 1) * 4)
+    return bytes(block), err, index
+
+
+def encode(samples, rate):
+    """Signed 16-bit samples to an .xbs at `rate` (the caller resamples).
+
+    A block's header names the step size it starts at, and the decoder takes
+    it from there, so each block tries every starting step and keeps the one
+    with the least error. Carrying the last block's step over instead lost a
+    sharp attack: a GoldenEye gunshot came through at 19 dB."""
+    samples = [max(-32768, min(32767, int(v))) for v in samples]
     samples += [0] * ((-len(samples)) % SAMPLES)
     blocks = bytearray()
-    index = 0
     for b in range(0, len(samples), SAMPLES):
         chunk = samples[b:b + SAMPLES]
-        predictor = chunk[0]
-        block = bytearray(struct.pack("<hBB", predictor, index, 0)) + bytearray(32)
-        for n in range(SAMPLES - 1):
-            want = chunk[n + 1]
-            best = None
-            for code in range(16):
-                p, i = _step(code, predictor, index)
-                err = abs(p - want)
-                if best is None or err < best[0]:
-                    best = (err, code, p, i)
-            _, code, predictor, index = best
-            at = 4 + (n // 8) * 4 + (n % 8) // 2
-            block[at] |= code << ((n & 1) * 4)
-        blocks += block
+        best = None
+        for index in range(0, 89, 2):
+            block, err, _ = _encode_block(chunk, index)
+            if best is None or err < best[1]:
+                best = (block, err)
+        blocks += best[0]
     return header(rate) + bytes(blocks)
 
 
