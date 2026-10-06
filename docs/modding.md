@@ -150,35 +150,43 @@ file.
 
 ## Status of this branch (`feat/ts2-disassembly`)
 
-Built and tested without the game, in a Linux container with no Windows
-build:
+Checked on the PC with the PAL disc, 6 Oct 2026:
 
-- Toolkit (xboxrecomp `feat/ts2-disassembly`): the override folder in the
-  lifter, the mods folder and patch files in the runtime. Each has a test that
-  needs no game files, and the C ones pass on Linux and, built with MinGW,
-  under Wine.
-- Here: the overrides split into `src/overrides/` (the lifter sees the same 33
-  functions as before), `ts2_types.h`, and the two format tools (23 tests).
+1. **Relift and build**: the lifter read `src/recomp_manual.c` and
+   `src/overrides/` together, wrapped the same 33 functions as before the
+   split, and the build linked with no duplicate or unresolved symbols.
+2. **Scripted run to Siberia** (muted, fresh saves, 95 s): reached
+   `story\l_35_ST.pak` at a steady 60 fps (58.5 mean including loads), no
+   faults, no unresolved indirect calls, the 93-entry 2D placement table
+   loaded. **Still to do: look at it.** Widescreen, the HUD and frame
+   interpolation have only been checked by the log, not by eye.
+3. **Archives**: all 68 rebuild byte-identical. `arcade/l_106.pak` did not
+   at first -- a zero-length entry at the same offset as a 2 MB one -- and
+   `ts2pak` is fixed for it.
+4. **Textures**: all 19,180 parse; the header layout is now known (see "The
+   formats" above) and every distinct texture round-trips through DDS.
+5. **A texture mod end to end**: button 1 (`xbstdbutton1.xbt`, the B
+   prompt) recoloured magenta in `arcade/l_103.pak` and `l_101.pak`, dropped
+   in `build/Release/mods/data/arcade/`. The log showed `[MODS]` for both,
+   frame captures of the front end held the magenta texture and not the
+   original, and a replayed frame showed the Select Profile screen's Back
+   prompt in magenta.
+6. **Toolkit tests under MSVC**: `kernel_path_mods`, `mod_patches` and
+   `mod_patches_runtime` pass.
 
-**Not yet done on a real machine.** The first session on the PC:
+What the mod test showed about the game:
 
-1. `git submodule update --init` and `py -3 scripts/build.py --relift`. The
-   override split changes what the lifter is given, so this is the real test:
-   it must build with no duplicate or unresolved `sub_` symbols.
-2. Play to Siberia with the usual input script. Widescreen, the HUD
-   placement and frame interpolation must look exactly as they did on `main`.
-3. `py -3 -m tools.ts2pak verify game/data/*.pak game/data/*/*.pak`: every
-   archive must rebuild identically. A `FAIL` means a layout assumption is
-   wrong; keep the output.
-4. `py -3 -m tools.xbt index game/data --csv textures.csv`, then
-   `py -3 -m tools.xbt info` on a few textures. Check that no texture reports
-   leftover bytes and that formats 0-2 cover them all. The unknown header words
-   it prints are what to compare next.
-5. A texture mod end to end, as in the example above, with
-   `build/Release/mods/data/chr.pak`. Look for the `[MODS]` line and the
-   changed texture in game.
-6. In xboxrecomp, `ctest` runs `kernel_path_mods`, `mod_patches` and
-   `mod_patches_runtime` with MSVC as well.
+- **Every level archive carries its own copy of shared textures.** The
+  button is in 43 archives; once the run loaded archives the mod had not
+  replaced, the original came back. A texture mod by archive has to rebuild
+  every archive that holds the texture. The toolkit's planned hashed texture
+  replacement (`xboxrecomp/docs/technical/modding-models-textures.md`, T4/T5)
+  would need one file.
+- **The game looks for `data\xbt.pak`, `data\xbob.pak` and
+  `data\xbsound.pak`, which are not on the disc**, and carries on without
+  them. If they are override archives the game itself supports (textures,
+  objects, sounds), a mod could ship just one of them. Not tested yet.
 
-Then the work that needs `default.xbe`: find the tuning tables (weapons first)
-and name what is found in `ts2_types.h`.
+Next: test whether `data\xbt.pak` overrides textures; then the work that
+needs `default.xbe` -- find the tuning tables (weapons first) and name what
+is found in `ts2_types.h`.
