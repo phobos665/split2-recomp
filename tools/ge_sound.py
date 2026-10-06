@@ -3,9 +3,10 @@ GoldenEye 007 (N64) sound effects: the bank, VADPCM decoding, WAV output.
 Used by tools.ge_guns; holds no game data.
 
 The effects are one standard libaudio bank ("B1" control file, then its
-sample table): one instrument of 261 sounds, all VADPCM. A sound's number
-here is the number the game plays it by (sndPlaySfx), and a gun's weapon
-stats hold the number of its firing sound.
+sample table): one instrument of 261 sounds, all VADPCM. The game plays a
+sound by number (sndPlaySfx), and a gun's weapon stats hold the number of
+its firing sound; on the PAL cartridge that number is bank entry number - 1
+(Bank.sound), heard 6 Oct 2026.
 
 Two details from the game's sound player (snd.c in the decompilation):
 
@@ -139,12 +140,20 @@ class Bank:
             raise ValueError("no sound bank found")
         return cls(rom, best[0])
 
+    def sound(self, num):
+        """The sound the game plays as `num` (its weapon stats' and its own
+        chains' numbering): bank entry num - 1. Found by ear on the PAL
+        cartridge, 6 Oct 2026: the silenced PP7's stats say 46, and its shot is
+        entry 45; entry 46 is a punch."""
+        return self.sounds[num - 1]
+
     def chain(self, num):
-        """The sound and the ones it starts, as [(sound, start in ms)]."""
+        """The sound the game plays as `num` and the ones it starts, as
+        [(sound, start in ms)]."""
         out, at, seen = [], 0, set()
-        while num and num not in seen and num < len(self.sounds):
+        while num and num not in seen and 0 < num <= len(self.sounds):
             seen.add(num)
-            s = self.sounds[num]
+            s = self.sound(num)
             out.append((s, at))
             at += s.delay_ms
             num = s.next_sound

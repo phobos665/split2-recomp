@@ -71,9 +71,12 @@ Some sounds start another (the shotgun's shot starts the shell case); the
 WAV mixes the chain. A gun's firing sound is in its weapon stats, found
 through the gun's own record in the data segment.
 
-Sound numbers: PP7 and sniper 46 (both silenced), KF7 109, D5K 117, shotgun
-121 (then 90, the shell), Magnum 111, rocket launch 1; reload 50, empty
-click 89.
+Sound numbers, as the game's weapon stats give them: PP7 and sniper 46 (both
+silenced), KF7 109, D5K 117, shotgun 121, Magnum 111, rocket launch 1;
+reload 50, empty click 89. On the PAL cartridge the game's number n is bank
+entry n - 1: the first extraction took them literally, and the pistol and
+sniper rifle played a punch (entry 46) until the silenced shot was picked
+out by ear as entry 45 (6 Oct 2026).
 
 ## Step 2a: the sounds (done, 6 Oct 2026)
 
