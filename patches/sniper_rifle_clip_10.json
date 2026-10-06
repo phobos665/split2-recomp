@@ -1,0 +1,13 @@
+{
+  "title": "4553000A",
+  "note": "Example patch file. Copy it into build/Release/mods/patches/ to use it. Gives the Sniper Rifle a 10-round clip instead of 5. Checked 6 Oct 2026: after the pickup in Siberia the clip held 10. Addresses are in the PAL default.xbe.",
+  "patches": [
+    {
+      "address": "0x002C461C",
+      "type": "i32",
+      "expect": 5,
+      "value": 10,
+      "note": "weapon 6 (Sniper Rifle), clip size: weapon table 0x002C3888 + 6 * 0x240 + 0x14 (src/ts2/ts2_types.h)"
+    }
+  ]
+}

@@ -136,9 +136,34 @@ builds, or loads from a file, after start-up is not in memory yet when patches
 apply; change the file through the mods folder instead. The format is defined
 in `xboxrecomp/src/kernel/mod_patches.h`.
 
-**There are no TS2 patches yet.** Finding the tables (weapon stats, character
-stats, bot skill) means reading `default.xbe`. That is the next step on this
-branch; see the end of this file.
+### The weapon table
+
+The weapons are defined in a table in `default.xbe`: 36 records of `0x240`
+bytes at `0x002C3888`, one per weapon id. What is known of a record, and the
+player fields that go with it, is in `src/ts2/ts2_types.h` ("Weapons"). The
+known fields so far are each weapon's ammunition type and clip size (and the
+same for a secondary fire); the rest of the record is mostly floats that are
+not identified yet.
+
+`patches/sniper_rifle_clip_10.json` is a working example: copy it into
+`build/Release/mods/patches/` and the Sniper Rifle (weapon 6) holds 10
+rounds instead of 5. The address of any other weapon's clip is
+`0x002C3888 + id * 0x240 + 0x14`. Only weapon 6 is named so far; the ids do
+not follow the order of the game's weapon names.
+
+How the table was found, so the next table can be found the same way:
+
+1. **Find the live value.** Snapshots of guest RAM either side of an action
+   (`snap` steps in `RECOMP_INPUT_SEQ`, one shot between each) and a diff for
+   a value that counts down by one each time: the clip, at player record
+   `+0x44C`. A `.data` global, `0x00356AA8`, points at the record.
+2. **Watch who writes it.** `RECOMP_WATCH_WRITE=*0x00356AA8+0x44C` with
+   `RECOMP_WATCH_ARM_ON=script` and a `watch` step just before the pickup
+   named the pickup, the reload and the shot.
+3. **Read the reload.** It computes `0x2C3888 + id * 0x240` and reads the
+   clip size from `+0x14`.
+4. **Patch it and look.** The example above, with the HUD and a snapshot to
+   confirm.
 
 ---
 

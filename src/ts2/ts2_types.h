@@ -118,4 +118,36 @@ typedef struct Ts2Reserve2DArgs {
 #define TS2_PLAYER_WEAPON       0x438         /* int32: current weapon (see above) */
 #define TS2_PLAYER_CLIP         0x44C         /* int32: rounds in the current weapon */
 
+/* ── Weapons ────────────────────────────────────────────────────────────
+ *
+ * The weapon definitions are a table in the XBE's own .data: 36 records of
+ * 0x240 bytes at 0x002C3888, indexed by weapon id (player +0x438). Found
+ * with a watch on the player's clip (RECOMP_WATCH_WRITE=*0x00356AA8+0x44C,
+ * armed by the input script): the reload, sub_000ABA30, computes
+ * 0x2C3888 + id * 0x240 and reads the fields below (6 Oct 2026).
+ *
+ * Weapon 6 is the Sniper Rifle ("Got the Sniper Rifle" on pickup in
+ * Siberia). Patching its clip from 5 to 10 through a patch file gave a
+ * 10-round clip in game, so these values are read live from this table.
+ * The ids do not follow the order of the English weapon names at
+ * 0x00337BC4; naming the rest is still to do (watch the same fields at
+ * each weapon's pickup).
+ *
+ * The weapon object (player +0x408) keeps one clip per ammunition type,
+ * at +0x34 + type * 4: the rifle's (type 4) is +0x44, which is the
+ * player record's +0x44C. Reserve ammunition is per type too, at player
+ * +0xA2C + type * 4. Fields not listed are not known yet; the record holds
+ * plenty of floats (+0x54, +0x58, +0x5C, +0x78, +0x7C and on) that look
+ * like tuning. */
+#define TS2_WEAPON_TABLE        0x002C3888u
+#define TS2_WEAPON_COUNT        36
+#define TS2_WEAPON_SIZE         0x240
+#define TS2_WEAPON_AMMO_TYPE    0x10   /* int32: primary ammunition type */
+#define TS2_WEAPON_CLIP_SIZE    0x14   /* int32: primary clip; 0 or 1 = no clip */
+#define TS2_WEAPON_AMMO2_TYPE   0x18   /* int32: secondary fire's type, 0 = none */
+#define TS2_WEAPON_CLIP2_SIZE   0x1C   /* int32: secondary clip */
+#define TS2_PLAYER_WEAPON_OBJ   0x408  /* the current weapon's object */
+#define TS2_PLAYER_RESERVE      0xA2C  /* int32[type]: reserve ammunition */
+#define TS2_WEAPON_SNIPER_RIFLE 6
+
 #endif /* TS2_TYPES_H */
