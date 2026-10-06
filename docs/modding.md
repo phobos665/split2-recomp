@@ -145,11 +145,23 @@ known fields so far are each weapon's ammunition type and clip size (and the
 same for a secondary fire); the rest of the record is mostly floats that are
 not identified yet.
 
+`py -3 -m tools.ts2_weapons game/default.xbe` prints every definition with
+its name and the fields known so far, read from your own XBE (`--json` adds
+each field's address):
+
+```text
+id name                      ammo_type  clip ... projectile_speed
+ 6 Sniper Rifle                      4     5 ...               30
+23 Tommy Gun                         9    32 ...              2.5
+24 SBP90 Machinegun                  8    64 ...                3
+```
+
 `patches/sniper_rifle_clip_10.json` is a working example: copy it into
 `build/Release/mods/patches/` and the Sniper Rifle (weapon 6) holds 10
-rounds instead of 5. The address of any other weapon's clip is
-`0x002C3888 + id * 0x240 + 0x14`. Only weapon 6 is named so far; the ids do
-not follow the order of the game's weapon names.
+rounds instead of 5. Any field's address is `0x002C3888 + id * 0x240 +`
+its offset. Clip sizes are confirmed by a patch; projectile speed by reading
+the code that spawns the shot; the scope zoom fields only by their shape.
+Damage is not in this record.
 
 How the table was found, so the next table can be found the same way:
 

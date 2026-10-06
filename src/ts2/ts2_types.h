@@ -129,9 +129,7 @@ typedef struct Ts2Reserve2DArgs {
  * Weapon 6 is the Sniper Rifle ("Got the Sniper Rifle" on pickup in
  * Siberia). Patching its clip from 5 to 10 through a patch file gave a
  * 10-round clip in game, so these values are read live from this table.
- * The ids do not follow the order of the English weapon names at
- * 0x00337BC4; naming the rest is still to do (watch the same fields at
- * each weapon's pickup).
+ * Every definition's name is below ("Names").
  *
  * The weapon object (player +0x408) keeps one clip per ammunition type,
  * at +0x34 + type * 4: the rifle's (type 4) is +0x44, which is the
@@ -149,6 +147,20 @@ typedef struct Ts2Reserve2DArgs {
 #define TS2_PLAYER_WEAPON_OBJ   0x408  /* the current weapon's object */
 #define TS2_PLAYER_RESERVE      0xA2C  /* int32[type]: reserve ammunition */
 #define TS2_WEAPON_SNIPER_RIFLE 6
+#define TS2_WEAPON_FIRE         0x60   /* the fire-mode block sub_00029DD0 reads */
+#define TS2_WEAPON_PROJ_SPEED   0x7C   /* float: projectile speed (fire block +0x1C) */
+
+/* Names. A pickup carries a weapon *type*, a second table: 42 records of
+ * 72 bytes at 0x002CA5F0, whose first word is the name's string number in
+ * the language's string table (the table for language L is
+ * [0x003362F0 + L * 4]; English 0x00336308). sub_000B5F00 makes "Got the
+ * <name>" from it. A definition's first word is its type's second word
+ * minus one, which pairs the two tables; tools/ts2_weapons.py prints every
+ * definition with its name and fields from the player's own XBE. */
+#define TS2_WEAPON_TYPE_TABLE   0x002CA5F0u
+#define TS2_WEAPON_TYPE_COUNT   42
+#define TS2_WEAPON_TYPE_SIZE    72
+#define TS2_STRINGS_BY_LANGUAGE 0x003362F0u   /* guest pointer per language */
 
 /* ── Time ───────────────────────────────────────────────────────────────
  *
