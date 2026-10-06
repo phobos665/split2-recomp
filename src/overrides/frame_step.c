@@ -43,6 +43,8 @@ static int ts2_tick_divide(void)
 }
 
 extern void sub_001AE3C0_gen(void);
+void ts2_give_all_poll(void);   /* give_all.c */
+
 void sub_001AE3C0(void)
 {
     static int32_t carry;
@@ -51,6 +53,7 @@ void sub_001AE3C0(void)
     float fstep;
 
     sub_001AE3C0_gen();
+    ts2_give_all_poll();
     if (n == 1)
         return;
     /* Paused (the game zeroes the float step): leave it alone. */
