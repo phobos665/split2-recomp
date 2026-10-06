@@ -7,6 +7,7 @@ committed or shared, which is why it writes under extracted/ (ignored).
     py -3 -m tools.ge_guns "n64/007 - GoldenEye (Europe).n64" --list
     py -3 -m tools.ge_guns "n64/007 - GoldenEye (Europe).n64"
     py -3 -m tools.ge_guns ROM --gun kf7 --gun pp7 --hands --preview
+    py -3 -m tools.ge_guns ROM --ts2-sounds game --mods build/Release/mods
 
 Each gun gets a folder:
 
@@ -29,6 +30,9 @@ import os
 import struct
 import sys
 
+from tools import xbs
+from tools.ts2pak import create_p8ck, read_pak
+
 from tools.ge_model import Model, materials, material_name, mirrored, render, write_obj
 from tools.ge_rom import Rom
 from tools.ge_sound import Bank, mix_chain, write_wav
@@ -44,6 +48,21 @@ GUNS = {
     "sniper": ("GsniperrifleZ", "PchrsniperrifleZ", "Sniper Rifle"),
     "magnum": ("GrugerZ", "PchrrugerZ", "Garrett Revolver"),
     "rocket": ("GrocketlaunchZ", "PchrrocketlaunchZ", "Rocket Launcher"),
+}
+
+# The TimeSplitters 2 sound each gun's shot replaces: the sample its
+# weapon's fire sound plays (definition +0x98 names an SFX_ entry in
+# sound/sounddata, whose first word is the sample's number; 6 Oct 2026).
+# Two are shared, so their other users change too: the S47's sample is
+# also the Tactical 12-Gauge's, the rocket's also the Homing Launcher's.
+TS2_FIRE_SOUNDS = {
+    "pp7": "sfx/gun_silenced22.xbs",               # SFX_GUN_SILENCED_PISTOL (and the Silenced Luger)
+    "kf7": "sfx/gun_m16_04_withbullet22.xbs",      # SFX_GUN18 (and SFX_GUNASSAULT)
+    "d5k": "sfx/gun_uzi_withbullet22_01d.xbs",     # SFX_GUN_UZI
+    "shotgun": "sfx/gun_dr08c_22.xbs",             # SFX_DRGUN3
+    "sniper": "sfx/gun_sniperrifle_nu44_03b.xbs",  # SFX_GUNSNIPERRIFLE2, 44.1 kHz
+    "magnum": "sfx/gun_walther_colt22_02.xbs",     # SFX_GUNCOLT
+    "rocket": "sfx/gun_rocketlauncher22.xbs",      # SFX_GUNROCKET03 (and the Homing Launcher)
 }
 
 # Sounds every gun shares, by the game's sound number.
@@ -151,6 +170,36 @@ def run(rom_path, out, names, hands=False, flash=False, preview=False, log=print
     return 0
 
 
+def build_ts2_sounds(rom_path, game_dir, mods_dir, names, log=print):
+    """mods/data/xbsound.pak: each gun's GoldenEye shot in place of the
+    TimeSplitters 2 sample its weapon fires, at that sample's own rate (the
+    game plays a sample at the rate its definition says, not the file's).
+    One file replaces the sound in every level: the game searches
+    xbsound.pak first (src/overrides/archives.c), and the level archives
+    carry their own copies under the same names."""
+    rom = Rom.open(rom_path)
+    bank = Bank.find(rom)
+    disc = read_pak(open(os.path.join(game_dir, "data", "sounds.pak"), "rb").read())
+    by_name = {e.name: e for e in disc.entries}
+    files = []
+    for key in names:
+        target = TS2_FIRE_SOUNDS[key]
+        rate, _ = xbs.parse(disc.read(by_name[target]))
+        fp = GUNS[key][0]
+        snd = (weapon_stats(rom, fp) or {}).get("fire_sound") or (SHARED_SOUNDS["rocket_launch"] if key == "rocket" else 0)
+        pcm = mix_chain(bank.chain(snd), bank.rate)
+        data = xbs.encode(xbs.resample(pcm, bank.rate, rate), rate)
+        files.append((target, data))
+        log(f"{key:8} GoldenEye sound {snd:3} -> {target} ({rate} Hz, {len(pcm) / bank.rate:.2f} s)")
+    out = os.path.join(mods_dir, "data")
+    os.makedirs(out, exist_ok=True)
+    path = os.path.join(out, "xbsound.pak")
+    with open(path, "wb") as f:
+        f.write(create_p8ck(files))
+    log(f"wrote {path} ({len(files)} sounds)")
+    return 0
+
+
 def list_guns(rom_path, log=print):
     rom = Rom.open(rom_path)
     for key, (fp, pickup, ts2) in GUNS.items():
@@ -171,10 +220,15 @@ def main(argv=None):
     ap.add_argument("--flash", action="store_true", help="keep the muzzle flash squares")
     ap.add_argument("--preview", action="store_true", help="also draw each model to a PNG")
     ap.add_argument("--list", action="store_true", help="list the guns and stop")
+    ap.add_argument("--ts2-sounds", metavar="GAME_DIR",
+                    help="instead: write the guns' shots into MODS/data/xbsound.pak, replacing TS2's (GAME_DIR holds data/sounds.pak)")
+    ap.add_argument("--mods", default="mods", help="the mods folder for --ts2-sounds (default: mods)")
     a = ap.parse_args(argv)
     try:
         if a.list:
             return list_guns(a.rom)
+        if a.ts2_sounds:
+            return build_ts2_sounds(a.rom, a.ts2_sounds, a.mods, a.gun or list(GUNS))
         return run(a.rom, a.out, a.gun or list(GUNS), a.hands, a.flash, a.preview)
     except (OSError, ValueError, KeyError) as e:
         print(f"ge_guns: {e}", file=sys.stderr)

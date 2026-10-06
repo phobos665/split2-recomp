@@ -75,13 +75,53 @@ Sound numbers: PP7 and sniper 46 (both silenced), KF7 109, D5K 117, shotgun
 121 (then 90, the shell), Magnum 111, rocket launch 1; reload 50, empty
 click 89.
 
-## Step 2: into TimeSplitters 2 (not started)
+## Step 2a: the sounds (done, 6 Oct 2026)
 
-* **Sounds first.** TS2's sounds are `.xbs` files in `sounds.pak`: a WAV header
-  with Xbox ADPCM audio. They need an encoder (the toolkit decodes this ADPCM
-  already) and the list of which `.xbs` each weapon fires. Replacing them uses
-  the mods folder the same way the `xbt.pak` texture override does.
-* **Then the models.** A `.xbr` writer, for static models only: a gun has no
+```
+py -3 -m tools.ge_guns "n64/007 - GoldenEye (Europe).n64" --ts2-sounds game --mods build/Release/mods
+```
+
+writes `mods/data/xbsound.pak` with each gun's GoldenEye shot in place of the
+TimeSplitters 2 sample its weapon fires. One file covers every level: the
+level archives carry their own copies of the sounds under the same names
+(`sfx/gun_silenced22.xbs` is in 13 of them), and the game searches
+`xbsound.pak` first since `src/overrides/archives.c`.
+
+**Checked in the game**, with the toolkit's `RECOMP_AUDIO_RECORD`, which
+writes everything the game plays to WAV: in the scripted Siberia run the
+player's three sniper shots and the guards' 14 silenced-pistol shots were
+the GoldenEye sounds, sample for sample, and none of them the originals. The
+other five go the same way but are not fired in that level. **Not yet
+listened to.**
+
+| TS2 weapon | its fire sound (definition `+0x98`) | sample replaced | GoldenEye sound |
+|---|---|---|---|
+| Silenced Pistol (and Silenced Luger) | `SFX_GUN_SILENCED_PISTOL` | `sfx/gun_silenced22.xbs` | 46, PP7 |
+| Soviet S47 (and the Tactical 12-Gauge) | `SFX_GUN18` | `sfx/gun_m16_04_withbullet22.xbs` | 109, KF7 |
+| SBP90 | `SFX_GUN_UZI` | `sfx/gun_uzi_withbullet22_01d.xbs` | 117, D5K |
+| Shotgun | `SFX_DRGUN3` | `sfx/gun_dr08c_22.xbs` | 121 + 90, shotgun and shell |
+| Sniper Rifle | `SFX_GUNSNIPERRIFLE2` | `sfx/gun_sniperrifle_nu44_03b.xbs` (44.1 kHz) | 46, silenced |
+| Garrett Revolver | `SFX_GUNCOLT` | `sfx/gun_walther_colt22_02.xbs` | 111, Magnum |
+| Rocket Launcher (and Homing Launcher) | `SFX_GUNROCKET03` | `sfx/gun_rocketlauncher22.xbs` | 1, rocket launch |
+
+How it was found: `sound/sounddata` in `sounds.pak` lists the 1,824 sample
+files, then 2,004 named sound definitions (`SFX_...`), each starting with
+its sample's number and holding the rate it plays at (`0x0759` for 22,050 Hz,
+`0x0EAA` for 44,100, `0x0556` for 16,000). A weapon definition names its
+primary fire sound at `+0x98` and the secondary's at `+0x148` (numbers into
+that definition list). Because the definition fixes the rate, a replacement
+is written at the rate of the file it replaces, not its own.
+
+The `.xbs` format and codec are `tools/xbs.py` (`decode` / `encode`):
+re-encoding the disc's own sounds gives back their header byte for byte and
+the sound at 115-125 dB SNR. The reload, empty-click and shell sounds are
+not replaced yet; their TS2 samples are `SFX_RELOAD` (`reload22_01`, shared
+with weapon changes), `SFX_GUN_DRYFIRE01` and the shotgun's
+`SFX_SHOTGUN_COCK`.
+
+## Step 2b: the models (not started)
+
+* A `.xbr` writer, for static models only: a gun has no
   skeleton, just parts. Each TS2 gun has three models (`_cl`, `_ph`,
   `_promo`; probably first-person, pickup, and the menu's picture). The
   GoldenEye models are small (156-388 triangles first-person, 46-65 pickup),
