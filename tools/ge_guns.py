@@ -367,6 +367,18 @@ def build_ts2_models(rom_path, game_dir, mods_dir, names, mirror_x=False, log=pr
             models.append((target, data))
             log(f"{key:8} {ge_file:18} -> {target:34} {sum(len(t) for t in by_key.values()):4} triangles, "
                 f"{len(used)} textures (with their vertex colours)")
+    # Every weapon, in every level. A level's archive only holds the models
+    # of the weapons placed in it, and the game loads a weapon's model by
+    # name when it is first drawn; for one the level lacks it falls back to
+    # a loose file on the disc, which does not exist, and its error path
+    # overflows the stack (Luger in Siberia, 6 Oct 2026). gun.pak holds them
+    # all: everything in it goes into the override archives, which the game
+    # searches first, the GoldenEye models in place of TS2's.
+    ours = {n for n, _ in models} | {n for n, _ in textures}
+    for e in guns.entries:
+        if e.name in ours:
+            continue
+        (textures if e.name.startswith("textures/") else models).append((e.name, guns.read(e)))
     out = os.path.join(mods_dir, "data")
     os.makedirs(out, exist_ok=True)
     with open(os.path.join(out, "xbob.pak"), "wb") as f:
