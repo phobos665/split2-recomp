@@ -287,6 +287,13 @@ def _fit(src_points, dst_points, src_barrel, dst_barrel, mirror_x):
     return apply
 
 
+# Every vertex gets the same normal. GoldenEye never lit its guns -- the
+# shading is in the vertex colours, now in the textures -- and lighting the
+# low-poly models by face normals left patches and inward-facing triangles
+# dark. One normal lights the whole gun evenly, as GoldenEye showed it.
+GUN_NORMAL = (0.0, 1.0, 0.0)
+
+
 def _tint_key(tri):
     """The colour a triangle's vertex colours give its texture: their
     average, rounded to steps of 8 so near-equal ones share a texture;
@@ -317,12 +324,7 @@ def _groups(parts, place):
             if tex is None:
                 continue                        # untextured: none on these guns
             pts = [place(*v[:3]) for v in tri]
-            ax, ay, az = (pts[1][k] - pts[0][k] for k in range(3))
-            bx, by, bz = (pts[2][k] - pts[0][k] for k in range(3))
-            n = (ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx)
-            ln = (n[0] ** 2 + n[1] ** 2 + n[2] ** 2) ** 0.5 or 1
-            n = (n[0] / ln, n[1] / ln, n[2] / ln)
-            vs = [(x, y, z, v[3], v[4], (127, 127, 127, 127), n) for (x, y, z), v in zip(pts, tri)]
+            vs = [(x, y, z, v[3], v[4], (127, 127, 127, 127), GUN_NORMAL) for (x, y, z), v in zip(pts, tri)]
             groups.setdefault((tex, _tint_key(tri)), []).append(vs)
     return groups
 
