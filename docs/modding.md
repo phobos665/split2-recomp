@@ -54,18 +54,20 @@ every archive with its size, format and a SHA-1 of its first mip level.
 
 ### The formats, and how sure we are
 
-- **`.pak`**: `tools/ts2pak.py` describes both layouts. `P8CK` was checked
-  against this disc. `P4CK` follows OpenRadical's `tspak`.
-  `py -3 -m tools.ts2pak verify game/data/*.pak` rebuilds each archive with
-  nothing changed and compares it byte for byte. **Run that once before
-  trusting `pack`.**
-- **`.xbt`**: `tools/xbt.py` describes it. The header size, the format field
-  and where the texels start were checked against this disc. Formats 0-2
-  (DXT1, DXT3, swizzled ARGB) come from OpenRadical's Noesis plugin. Format 3
-  (raw 24-bit) is a guess. The mip count is worked out from the file size,
-  because nobody knows which header word holds it. `from-dds` keeps every
-  unknown header word from the original and refuses a different size, format
-  or number of mip levels unless told otherwise.
+- **`.pak`**: `tools/ts2pak.py` describes both layouts. All 68 archives on
+  the PAL disc (23 `P4CK`, 45 `P8CK`) rebuild byte-identical through
+  `py -3 -m tools.ts2pak verify` (6 Oct 2026). Run it again on another
+  release before trusting `pack` there.
+- **`.xbt`**: `tools/xbt.py` describes it. The header gives the stored size,
+  the shown size, the mip count and the format. All 19,180 textures in the
+  archives (4,393 distinct) fit that exactly, and every one comes back
+  byte-identical through DDS and `from-dds` (6 Oct 2026). Formats 0-2 (DXT1,
+  DXT3, swizzled ARGB) are all the disc uses; format 3 never occurs and is a
+  guess. 96 textures are shown smaller than they are stored (128x192 stored
+  as 128x256); in their DDS the picture is the top-left corner. `from-dds`
+  keeps every header word it does not understand from the original, and
+  refuses a different stored size, format or number of mip levels unless
+  told otherwise.
 - **`.xbr` models**: no tool yet. Swapping one model file for another works
   through the mods folder. Writing new geometry is unsolved anywhere (see
   `xboxrecomp/docs/technical/modding-models-textures.md`).

@@ -10,30 +10,40 @@ The workflow for a texture mod: unpack the archive (tools.ts2pak), turn the
 .xbt into a DDS, paint it in any editor that saves DDS, turn it back with the
 original as the template, repack the archive, drop it in the mods folder.
 
-The layout, as far as it is known:
+The layout:
 
-  header   0x80 bytes. +0x08 width, +0x0C height, +0x14 format code; the
-           other words are not understood and are copied from the template
-           unchanged (`info` prints them, to help work them out).
-  texels   from 0x80: level 0, then each smaller mip level, to the end.
+  header   0x80 bytes.
+           +0x00 width,  +0x04 height     as stored: what the texels are
+           +0x08 width,  +0x0C height     as shown: smaller for the 96
+                                          textures whose size is not a power
+                                          of two (128x192 is stored 128x256)
+           +0x10 mip levels - 1
+           +0x14 format code
+           the other words are not understood and are copied from the
+           template unchanged (`info` prints +0x18, +0x1C and +0x20; the last
+           two are 0 or small floats -- 2.0, 3.0, 4.0 -- on the same 382
+           textures, and +0x18 is 0xFFFFFFFF on the rest)
+  texels   from 0x80: level 0 at the stored size, then each smaller level.
 
   format   0  DXT1                         blocks as D3D stores them
            1  DXT3                         blocks as D3D stores them
            2  A8R8G8B8, swizzled           the Xbox's Morton order, per level
            3  raw 24-bit                   NOT VERIFIED: assumed B,G,R, linear
 
-The header size and the format field were checked on the PAL disc, and the
-texel data at +0x80 matched the GPU's own copy of 97 of 98 textures, mips and
-all (xboxrecomp docs/technical/modding-models-textures.md). The format codes
+Checked on the PAL disc (6 Oct 2026): all 19,180 textures in its archives
+are exactly 0x80 bytes of header plus the levels the stored size and +0x10
+describe -- no texture is a byte long or short. 11,310 are DXT1, 7,138
+DXT3, 732 swizzled ARGB; none is format 3. The texel data at +0x80 had
+already matched the GPU's own copy of 97 of 98 textures, mips and all
+(xboxrecomp docs/technical/modding-models-textures.md). The format codes
 come from OpenRadical's Noesis plugin (fmt_xbox.py); code 2 is named a
-"packed normal map" there but decodes as swizzled 32-bit colour. The mip
-count is not read from the header -- which word holds it, if any, is not
-known -- but worked out from the file size, and `info` says when the size
-does not divide into whole levels.
+"packed normal map" there but decodes as swizzled 32-bit colour.
 
-from-dds is strict on purpose: the same width, height, format and number of
-levels as the template, unless told otherwise, because the unknown header
-words may well describe exactly those.
+The DDS is the stored texels, every level. For a texture shown smaller than
+it is stored, the picture is in the top-left corner and the rest is
+whatever the game's tools left there; paint inside it. from-dds is strict
+on purpose: the same stored size, format and number of levels as the
+template, unless told otherwise.
 """
 
 import argparse
@@ -65,20 +75,13 @@ def level_size(fmt, w, h):
     raise XbtError(f"unknown format code {fmt}")
 
 
-def mip_chain(fmt, w, h, available):
-    """[(w, h, size)] of the levels that fit in `available` bytes, and the
-    bytes left over. Stops at 1x1 or when the next level does not fit."""
-    levels, used = [], 0
-    while True:
-        size = level_size(fmt, w, h)
-        if used + size > available:
-            break
-        levels.append((w, h, size))
-        used += size
-        if w == 1 and h == 1:
-            break
+def mip_chain(fmt, w, h, count):
+    """[(w, h, size)] for `count` levels from w x h, each half the last."""
+    levels = []
+    for _ in range(count):
+        levels.append((w, h, level_size(fmt, w, h)))
         w, h = max(1, w // 2), max(1, h // 2)
-    return levels, available - used
+    return levels
 
 
 class Xbt:
@@ -87,16 +90,21 @@ class Xbt:
             raise XbtError(f"{len(data)} bytes: shorter than the 0x80-byte header")
         self.header = bytearray(data[:HEADER])
         self.texels = data[HEADER:]
-        self.width, self.height = struct.unpack_from("<II", data, 8)
-        self.format = struct.unpack_from("<I", data, 0x14)[0]
+        (self.width, self.height, self.shown_width, self.shown_height,
+         last_level, self.format) = struct.unpack_from("<6I", data, 0)
         if self.format not in FORMATS:
             raise XbtError(f"unknown format code {self.format}")
         if not (0 < self.width <= 4096 and 0 < self.height <= 4096):
             raise XbtError(f"implausible size {self.width}x{self.height}")
-        self.levels, self.leftover = mip_chain(self.format, self.width, self.height,
-                                               len(self.texels))
-        if not self.levels:
-            raise XbtError("not even level 0 fits in the file")
+        if last_level > 12:
+            raise XbtError(f"implausible mip count {last_level + 1}")
+        self.levels = mip_chain(self.format, self.width, self.height, last_level + 1)
+        need = sum(size for _, _, size in self.levels)
+        if need > len(self.texels):
+            raise XbtError(f"the header describes {need} bytes of texels at "
+                           f"{self.width}x{self.height}, {last_level + 1} level(s); "
+                           f"the file has {len(self.texels)}")
+        self.leftover = len(self.texels) - need
 
     def level_bytes(self):
         out, at = [], 0
@@ -241,7 +249,9 @@ def read_dds(data):
 
 
 def from_dds(dds_data, template, allow_resize=False, allow_levels=False):
-    """A new .xbt: the template's header, the DDS's texels."""
+    """A new .xbt: the template's header, the DDS's texels. A resize sets both
+    the stored and the shown size to the DDS's; a different level count
+    rewrites +0x10."""
     fmt, w, h, levels = read_dds(dds_data)
     if fmt != template.format:
         raise XbtError(f"the DDS is {FORMATS[fmt]} but the template is "
@@ -253,7 +263,9 @@ def from_dds(dds_data, template, allow_resize=False, allow_levels=False):
         raise XbtError(f"the DDS has {len(levels)} mip level(s), the template "
                        f"{len(template.levels)} (--allow-levels to insist)")
     header = bytearray(template.header)
-    struct.pack_into("<II", header, 8, w, h)
+    if (w, h) != (template.width, template.height):
+        struct.pack_into("<IIII", header, 0, w, h, w, h)
+    struct.pack_into("<I", header, 0x10, len(levels) - 1)
     body = bytearray()
     for lw, lh, data in levels:
         body += swizzle(data, lw, lh, 4) if fmt == 2 else data
@@ -267,10 +279,12 @@ def from_dds(dds_data, template, allow_resize=False, allow_levels=False):
 
 def describe(path, x):
     unknown = " ".join(f"{struct.unpack_from('<I', x.header, o)[0]:08X}"
-                       for o in (0x00, 0x04, 0x10, 0x18, 0x1C))
-    tail = f", {x.leftover} byte(s) left over" if x.leftover else ""
-    return (f"{path}: {x.width}x{x.height} {FORMATS[x.format]}, {len(x.levels)} level(s)"
-            f"{tail}; header +00 +04 +10 +18 +1C = {unknown}")
+                       for o in (0x18, 0x1C, 0x20))
+    shown = ("" if (x.shown_width, x.shown_height) == (x.width, x.height)
+             else f" (shown {x.shown_width}x{x.shown_height})")
+    tail = f", {x.leftover} byte(s) after the last level" if x.leftover else ""
+    return (f"{path}: {x.width}x{x.height}{shown} {FORMATS[x.format]}, "
+            f"{len(x.levels)} level(s){tail}; header +18 +1C +20 = {unknown}")
 
 
 def cmd_info(args):
@@ -326,13 +340,15 @@ def cmd_index(args):
                 try:
                     x = Xbt(pak.read(e))
                 except XbtError as exc:
-                    rows.append([os.path.relpath(path, args.data), e.name, "", "", "", "", str(exc)])
+                    rows.append([os.path.relpath(path, args.data), e.name,
+                                 "", "", "", "", "", "", str(exc)])
                     continue
                 level0 = x.level_bytes()[0][2]
                 rows.append([os.path.relpath(path, args.data), e.name, x.width, x.height,
-                             FORMATS[x.format], len(x.levels),
-                             hashlib.sha1(level0).hexdigest()])
-    head = ["pak", "name", "width", "height", "format", "levels", "level0_sha1"]
+                             x.shown_width, x.shown_height, FORMATS[x.format],
+                             len(x.levels), hashlib.sha1(level0).hexdigest()])
+    head = ["pak", "name", "width", "height", "shown_width", "shown_height",
+            "format", "levels", "level0_sha1"]
     out = open(args.csv, "w", newline="") if args.csv else sys.stdout
     w = csv.writer(out)
     w.writerow(head)

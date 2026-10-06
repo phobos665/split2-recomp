@@ -178,7 +178,7 @@ def build_pak(pak, replacements=None):
         else:
             regions.append((e.offset, e.length, "data", new, [e]))
             shared[(e.offset, e.length)] = [e]
-    regions.sort(key=lambda r: (r[0], r[2] != "header"))
+    regions.sort(key=lambda r: (r[0], r[2] != "header", r[1]))
 
     out = bytearray()
     new_offset = {}          # id(entry) -> (offset, length)
@@ -187,6 +187,15 @@ def build_pak(pak, replacements=None):
     prev_orig_end = 0
     for orig_off, orig_len, kind, payload, es in regions:
         body = payload if payload is not None else pak.data[orig_off:orig_off + orig_len]
+        if not body and kind == "data":
+            # An empty entry has nothing to place, so it moves with whatever
+            # is around it and never moves anything itself. arcade/l_106.pak
+            # has a zero-length pad/data/level106.raw at the offset of the
+            # 2 MB level106.xbr; placed as a region of its own, it pushed
+            # everything after it along and the rebuild differed.
+            for e in es:
+                new_offset[id(e)] = (orig_off + delta, 0)
+            continue
         at = orig_off + delta
         if at < len(out):
             at = _align_up(len(out), _align_of(orig_off))

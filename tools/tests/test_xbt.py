@@ -13,10 +13,13 @@ import unittest
 from tools import xbt
 
 
-def make_xbt(fmt, w, h, levels_data, extra=b"", magic=0x11, word4=0x22):
+def make_xbt(fmt, w, h, levels_data, extra=b"", shown=None, levels=None):
+    """The layout found on the disc: stored size, shown size, levels - 1, format."""
+    sw, sh = shown or (w, h)
+    count = len(levels_data) if levels is None else levels
     header = bytearray(0x80)
-    struct.pack_into("<IIII", header, 0, magic, word4, w, h)
-    struct.pack_into("<I", header, 0x14, fmt)
+    struct.pack_into("<6I", header, 0, w, h, sw, sh, count - 1, fmt)
+    struct.pack_into("<I", header, 0x18, 0xFFFFFFFF)
     header[0x40] = 0x99    # an unknown byte that must survive a round trip
     return bytes(header) + b"".join(levels_data) + extra
 
@@ -50,19 +53,27 @@ class SwizzleTest(unittest.TestCase):
 
 
 class LayoutTest(unittest.TestCase):
-    def test_mip_chain_from_size(self):
+    def test_mip_chain_from_header(self):
         # DXT1 8x8: 32 + 8 + 8 + 8 bytes (8x8, 4x4, 2x2, 1x1 -- min one block).
         x = xbt.Xbt(make_xbt(0, 8, 8, [b"a" * 32, b"b" * 8, b"c" * 8, b"d" * 8]))
         self.assertEqual([(w, h) for w, h, _ in x.levels], [(8, 8), (4, 4), (2, 2), (1, 1)])
         self.assertEqual(x.leftover, 0)
 
-    def test_leftover_is_reported(self):
-        x = xbt.Xbt(make_xbt(1, 4, 4, [b"a" * 16], extra=b"zz"))
-        self.assertEqual(len(x.levels), 1)
-        self.assertEqual(x.leftover, 2)
+    def test_fewer_levels_than_fit(self):
+        # +0x10 says two levels; the file would hold more. The header wins.
+        x = xbt.Xbt(make_xbt(0, 8, 8, [b"a" * 32, b"b" * 8], extra=b"c" * 16, levels=2))
+        self.assertEqual(len(x.levels), 2)
+        self.assertEqual(x.leftover, 16)
+
+    def test_stored_bigger_than_shown(self):
+        # As on the disc: 128x192 shown, stored 128x256.
+        x = xbt.Xbt(make_xbt(1, 128, 256, [b"a" * (32 * 64 * 16)], shown=(128, 192)))
+        self.assertEqual((x.width, x.height, x.shown_width, x.shown_height), (128, 256, 128, 192))
+        self.assertEqual(x.leftover, 0)
 
     def test_rejects(self):
-        for data in (b"short", make_xbt(9, 4, 4, [b"x" * 64]), make_xbt(0, 0, 4, [])):
+        for data in (b"short", make_xbt(9, 4, 4, [b"x" * 64]), make_xbt(0, 0, 4, [b"x"]),
+                     make_xbt(0, 8, 8, [b"a" * 32], levels=4)):     # header wants more bytes
             with self.assertRaises(xbt.XbtError):
                 xbt.Xbt(data)
 
@@ -104,7 +115,10 @@ class DdsTest(unittest.TestCase):
         with self.assertRaises(xbt.XbtError):
             xbt.from_dds(one_level, tmpl)                              # levels
         new = xbt.Xbt(xbt.from_dds(one_level, tmpl, allow_levels=True))
-        self.assertEqual(len(new.levels), 1)
+        self.assertEqual(len(new.levels), 1, "+0x10 rewritten for the new level count")
+        big = xbt.Xbt(xbt.from_dds(bigger, tmpl, allow_resize=True, allow_levels=True))
+        self.assertEqual((big.width, big.height, big.shown_width, big.shown_height),
+                         (16, 8, 16, 8), "a resize sets the stored and shown size")
 
     def test_cli_and_index(self):
         from tools.tests.test_ts2pak import p8ck
@@ -118,7 +132,7 @@ class DdsTest(unittest.TestCase):
             self.assertEqual(xbt.main(["index", data, "--csv", csv_path]), 0)
             rows = open(csv_path).read().splitlines()
             self.assertEqual(len(rows), 2)
-            self.assertIn("textures\\0001.xbt,4,4,DXT1,1,", rows[1])
+            self.assertIn("textures\\0001.xbt,4,4,4,4,DXT1,1,", rows[1])
             p = os.path.join(tmp, "a.xbt")
             open(p, "wb").write(tex)
             d = os.path.join(tmp, "a.dds")
