@@ -1,0 +1,38 @@
+[
+ {
+  "start": "0x0005B2A0",
+  "note": "Indirect-call target observed at runtime; decodes as a function body."
+ },
+ {
+  "start": "0x001B8670",
+  "note": "PsCreateSystemThreadEx StartContext1 observed at runtime; decodes as a function body."
+ },
+ {
+  "start": "0x001CEF2A",
+  "note": "PsCreateSystemThreadEx StartContext1 observed at runtime; decodes as a function body."
+ },
+ {
+  "start": "0x002142A4",
+  "note": "Indirect-call target observed at runtime; decodes as a function body."
+ },
+ {
+  "start": "0x00214BAB",
+  "note": "Indirect-call target observed at runtime; decodes as a function body."
+ },
+ {
+  "start": "0x00031280",
+  "note": "Indirect-call target observed at runtime; decodes as a function body."
+ },
+ {
+  "start": "0x0016A870",
+  "note": "Object callback: pushed at 0x0016AAFB as the callback of sub_0014A400(obj, 2, callback), which stores it at obj+0x134, the slot the main loop calls indirectly at 0x0015415C (where 0x0005B2A0 and 0x00031280 were observed at runtime); found statically; decodes as a function body."
+ },
+ {
+  "start": "0x0016E660",
+  "note": "Object callback: pushed at 0x0016EF25 as the callback of sub_0014A400(obj, 3, callback), which stores it at obj+0x138, the array whose slot 2 the main loop calls indirectly at 0x0015415C (where 0x0005B2A0 and 0x00031280 were observed at runtime); found statically; decodes as a function body."
+ },
+ {
+  "start": "0x00073CE0",
+  "note": "Indirect-call target observed at runtime; decodes as a function body."
+ }
+]

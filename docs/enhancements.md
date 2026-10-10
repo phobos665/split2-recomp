@@ -112,7 +112,7 @@ The toolkit has no mouse input today.
 | Step | Where | Estimate |
 | --- | --- | --- |
 | Mouse input: raw input, cursor lock in game and release in menus and on alt-tab, sensitivity and invert, mouse buttons and wheel as bindable controls, launcher UI | Toolkit | 1–2 weeks |
-| Find TS2's view angles and where stick input becomes turn rate (the in-game camera, `sub_00032DC0` / `0x4B2CA0`, is the starting point) | TS2 | 1–2 weeks |
+| Find TS2's view angles and where stick input becomes turn rate (the in-game camera, `sub_00032DC0` / `0x4B2CA0` in PAL and `sub_00032D90` / `0x4B2F60` in USA, is the starting point) | TS2 | 1–2 weeks |
 | Apply the mouse to the view angles directly: pitch limits; auto-aim, look-spring and aim smoothing off for the mouse | TS2 | 3–5 days |
 | Edge cases: aim mode, scope zoom, turrets, cutscenes and pause, respawn, split screen (player 1 only) | TS2 | 1–2 weeks |
 | Optional: clicking TS2's menus with the mouse | TS2 | 2–3 weeks |

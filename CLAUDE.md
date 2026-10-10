@@ -24,8 +24,8 @@ planned enhancement. TS2's share of it:
 
 | Enhancement | TS2's part |
 | --- | --- |
-| Widescreen | Done: the in-game camera is widened where it is built (`sub_00032DC0`), and the front end and HUD are placed by call site (`k_ts2_ui_places` in `src/recomp_manual.c`). Leftovers are in `docs/enhancements.md` |
-| Frame rate above 60 | Done by presenting above it: the toolkit's frame interpolation (`frame_interp`) draws the in-between frames while logic stays at 60. TS2 names its matrix registers (c60 projection, c64-c75) at its first present, `sub_001CC530` in `src/recomp_manual.c`. Leftovers are in `docs/enhancements.md` |
+| Widescreen | Done: the in-game camera is widened where it is built (`ts2_camera_setup` in `src/recomp_manual.c`), and the front end and HUD are placed by call site (each release's `k_ts2_ui_places`, in `config/<region>/overrides.inc`). Leftovers are in `docs/enhancements.md` |
+| Frame rate above 60 | Done by presenting above it: the toolkit's frame interpolation (`frame_interp`) draws the in-between frames while logic stays at 60. TS2 names its matrix registers (c60 projection, c64-c75) at its first present (`ts2_present` in `src/recomp_manual.c`). Leftovers are in `docs/enhancements.md` |
 | Online play | TS2 has system link (LAN) and no Xbox Live. Once the toolkit tunnels system link, little should be left to do here |
 | Mods | Assets are in `data/*.pak`. Naming dumped textures by pak entry is this repo's job; the dump and replace is the toolkit's |
 | Cutscene skip | In-engine cutscenes: find where they start and whether the game already has a skip |
@@ -43,15 +43,25 @@ pin the toolkit branch of the same work.
 
 | | |
 | --- | --- |
-| Title ID | `4553000A` |
-| Release | PAL, certificate region 0x4, version 2. `default.xbe` SHA-1 `2809eb147385723eaa90c425be89ee4db033fc5a` |
-| XDK | 4721, plain D3D8 (not LTCG) |
-| Entry point | `0x001CF3C9` |
+| Title ID | `4553000A`, the same in every release |
+| Releases | PAL: certificate region 0x4, version 2, `default.xbe` SHA-1 `2809eb147385723eaa90c425be89ee4db033fc5a`. USA: certificate region 0x1, version 2, built 2002-10-01, SHA-1 `3ec95fe3ae9e7794d83a5b489ad8583f352e0c18` |
+| XDK | 4721, plain D3D8 (not LTCG), every library, in both |
+| Entry point | `0x001CF3C9` (PAL), `0x001CEF99` (USA) |
 | Saves | `game/UDATA/4553000a/` |
 | Settings file | `%APPDATA%\xboxrecomp\titles\4553000A.conf` |
 
-`config/seeds.json` and `config/xdk_symbols.json` are addresses in that exact
-XBE. Another region needs its own copies.
+`config/<region>/` (`pal`, `us`) holds the addresses in one exact XBE: its
+`seeds.json`, `xdk_symbols.json` and `overrides.inc` (the functions
+`src/recomp_manual.c` attaches to). `scripts/build.py` picks the folder by the
+XBE's SHA-1 and writes which release it lifted beside the lifted code
+(`src/recomp/ts2_region.h`). Another release needs a folder of its own, found
+function by function: the USA code is the PAL code moved by a different amount
+in each stretch of `.text` (0 to -0x450), so no one shift carries an address over.
+
+The title ID cannot tell the releases apart, and the toolkit's per-title files
+are keyed by it: `xboxrecomp/config/seeds/4553000A.json` holds the PAL seeds, and
+`recompile.py` and `tools.seed_from_log` fall back to it when `--seeds` is not
+given. Always pass `--seeds ../config/<region>/seeds.json`.
 
 State (Sep 2026): the front end and story mode play (Siberia), 5 ms a frame,
 60 fps under the adaptive cap. There are no unresolved indirect calls. It has
@@ -59,6 +69,13 @@ no XMV movies. The toolkit's history with this game is in
 `xboxrecomp/docs/technical/second-title-bringup.md`,
 `ts2-performance-plan.md`, `resolution-and-framerate.md` and
 `modding-models-textures.md`.
+
+USA (Oct 2026): driven by an input script it goes through the front end, saves
+a profile and plays the start of Siberia (picks up a weapon, opens the pause
+menu) at 60 fps with no unresolved indirect calls. Every PAL override is ported
+(`config/us/overrides.inc`), and widescreen (camera, 71 of the 93 placement
+sites seen drawing) and frame interpolation were checked in captures. It has
+not been played by hand yet, nor past the start of Siberia.
 
 One open issue: in one run out of two or three, the game has exited with code
 `0xFFFFFFFF` with no fault and no kernel call. `[EXIT]` lines in the log (the
@@ -72,12 +89,15 @@ toolkit's exit trace) name the caller if it happens again.
 CMakeLists.txt          the executable and the launcher, on top of xboxrecomp
 scripts/build.py        lift (first time or --relift), then configure and build
 src/main.c              the host entry point, from xboxrecomp/templates/new-game
-src/recomp_manual.c     hand-written overrides of lifted functions
-config/seeds.json       function entry points discovery cannot see
-config/xdk_symbols.json XDK function names in this XBE (for the D3D8 replacements)
+src/recomp_manual.c     hand-written overrides of lifted functions, the same for every release
+config/<region>/        one release's addresses (pal, us):
+  seeds.json            function entry points discovery cannot see
+  xdk_symbols.json      XDK function names in that XBE (for the D3D8 replacements)
+  overrides.inc         the functions recomp_manual.c wraps, by address, and its UI placement table
 game/                   the disc, supplied by the user        (ignored)
 src/recomp/gen/         the lifted C, i.e. game code           (ignored)
-.pipeline/              disasm, func_id and recomp stage output (ignored)
+src/recomp/ts2_region.h which release was lifted, written by build.py (ignored)
+.pipeline/              disasm, func_id and recomp stage output: PAL's, and USA's in .pipeline/us (ignored)
 build/                  CMake build; the exe is build/Release/split2_recomp.exe
 ```
 
@@ -122,9 +142,14 @@ watchpoint switches.
 - `src/recomp_manual.c` is the one place a lifted function is replaced. The
   lifter reads it (`--exclude-manual`) and does not generate what it defines, so
   a second override file gives duplicate symbols. **Write the reason beside every
-  override when you add it.**
+  override when you add it.** What is the same in every release is written there,
+  as a hook; where it attaches is in each release's `config/<region>/overrides.inc`,
+  which it includes. The lifter reads only one file, as text, so `build.py` hands it
+  the two as one (`.pipeline/.../manual/src/recomp_manual.c`): lift through
+  `build.py`, not `recompile.py` directly.
 - A new unresolved `[ICALL]` target becomes a seed:
-  `py -3 -m tools.seed_from_log <log> <xbe> --functions ../.pipeline/disasm/functions.json --seeds ../config/seeds.json`,
+  `py -3 -m tools.seed_from_log <log> <xbe> --functions ../.pipeline/disasm/functions.json --seeds ../config/pal/seeds.json`
+  (USA: `../.pipeline/us/disasm/functions.json`, `../config/us/seeds.json`),
   run from `xboxrecomp/`. Then rebuild with `--relift --from disasm`.
 - `src/main.c` is a copy of the toolkit template with three defines changed
   (entry point, game paths). When the template changes upstream, bring the change
