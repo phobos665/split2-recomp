@@ -12,23 +12,14 @@ Estimates are working time; calendar time will be longer. They date from
 
 | Enhancement | Where | Notes |
 | --- | --- | --- |
-| Widescreen (16:9) | Both | Camera widened where the game builds it (culling agrees); front end, HUD and Arcade screens laid out for 16:9 by call site. `RECOMP_TS2_MENUS=43` brings back the 4:3 front end. |
+| Widescreen (16:9) | Both | Camera widened where the game builds it, so culling agrees; front end, HUD and every other screen laid out for 16:9 by call site. `RECOMP_TS2_MENUS=43` brings back the 4:3 front end. |
 | Internal resolution | Toolkit | `RECOMP_RES_SCALE=1..8` |
-| Vulkan renderer | Toolkit | `RECOMP_D3D8_BACKEND=vulkan`. Needs `third_party/dxc` (the DXC GitHub release) for the build |
+| Vulkan renderer | Toolkit | The renderer on macOS. On Windows `RECOMP_D3D8_BACKEND=vulkan`, which needs `third_party/dxc` (the DXC GitHub release) for the build |
 | Launcher mouse input | Toolkit | Arrow hit boxes match what is drawn (xboxrecomp #24) |
 | Variable refresh rate | Toolkit | Borderless fullscreen (Alt+Enter), VRR presents on both renderers; launcher rows Fullscreen and Variable refresh rate (xboxrecomp #29) |
 | Frame interpolation | Both | `frame_interp = 2..4` (launcher row): 120+ frames a second shown while the game runs at 60. TS2 names its matrix registers (c60 projection, c64-c75 model-view and bones) in `src/recomp_manual.c`. See below |
-
-### Widescreen leftovers
-
-- Not yet surveyed, so still on the renderer's width guess: Challenge,
-  MapMaker, Options, end-of-level results, split screen.
-- Story HUD sites not yet in the table (pickup and objective messages,
-  single-weapon extras): `000E4888` and its neighbours, `000C47C1`,
-  `000C480A`, `000AA5AD`.
-- On the story screens the panel glow's rays end at the old right edge.
-  Needs an "extend to the edge" placement in the toolkit.
-- Vulkan has not been checked in play; the scripted runs do not reach it.
+| macOS (Apple Silicon) | Both | The toolkit's port; here, `src/main.c` from the portable template, the CMake project and `scripts/build.py` (Ninja). PAL plays to Siberia at 60 fps in a scripted run (13 Oct 2026) |
+| System Link | Both | Windows only. The toolkit emulates the network card and hosts sessions over a LAN or the internet; TS2 needed one seed. See below and [multiplayer.md](multiplayer.md) |
 
 ### Frame interpolation leftovers
 
@@ -40,6 +31,17 @@ Estimates are working time; calendar time will be longer. They date from
 - Measurements and how it works:
   `xboxrecomp/docs/technical/frame-interpolation.md`.
 
+### System Link leftovers
+
+- macOS: the toolkit's network card is Windows-only (toolkit work).
+- The USA release: System Link not opened yet; it probably needs its own
+  counterpart of PAL's seed `0x0009D530`.
+- Playing against xemu or a console (needs the player's `XboxLANKey`), and
+  XLink Kai: untested.
+- Split screen over System Link: untested.
+
+### Checking a screen's widescreen layout
+
 How to survey a screen: F11 with `RECOMP_TS2_UI_SITES=1` set, then
 `d3d8_replay --each-tag` / `--each-tag-hidden` on the capture and
 `--place <site>=<placement>` to try a placement before it goes into
@@ -49,32 +51,13 @@ How to survey a screen: F11 with `RECOMP_TS2_UI_SITES=1` set, then
 
 | Enhancement | Toolkit | TS2 | Total | Confidence |
 | --- | --- | --- | --- | --- |
-| [Netplay (System Link)](#netplay-system-link) | 2–4 weeks | 1–2 weeks | 3–8 weeks, by reach | Low to medium |
 | [Modern controller icons](#modern-controller-icons) | 2–3 weeks | ~1 week | 3–4 weeks (first milestone 1.5–2) | High to medium |
 | [Native mouselook](#native-mouselook) | 1–2 weeks | 2–4 weeks | 3–6 weeks (+2–3 for mouse menus) | Medium to low |
-| Widescreen leftovers (above) | Days | 1–2 weeks | 1–2 weeks | High |
 
-Two of these share groundwork: the controller icons need texture
-replacement by content hash, which is also the first step for texture mods.
-Netplay is more robust with the frame-rate work's fixed 60 Hz tick.
+The controller icons need texture replacement by content hash, which is
+also the first step for texture mods.
 
 ---
-
-### Netplay (System Link)
-
-TS2 has System Link (LAN) and no Xbox Live. The plan is to emulate the
-network card in the toolkit so the game's own network code runs unchanged.
-Full plan in [multiplayer.md](multiplayer.md).
-
-| Reach | Estimate |
-| --- | --- |
-| LAN: two copies on one PC or one network | 3–5 weeks |
-| Internet through XLink Kai | 4–6 weeks |
-| Internet through our own server | 5–8 weeks |
-
-The largest unknown is TS2's bring-up: its network code has never run under
-the recompiler. Every copy of the toolkit reports the same MAC address today,
-which has to change first.
 
 ### Modern controller icons
 

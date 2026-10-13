@@ -24,9 +24,9 @@ planned enhancement. TS2's share of it:
 
 | Enhancement | TS2's part |
 | --- | --- |
-| Widescreen | Done: the in-game camera is widened where it is built (`ts2_camera_setup` in `src/recomp_manual.c`), and the front end and HUD are placed by call site (each release's `k_ts2_ui_places`, in `config/<region>/overrides.inc`). Leftovers are in `docs/enhancements.md` |
+| Widescreen | Done: the in-game camera is widened where it is built (`ts2_camera_setup` in `src/recomp_manual.c`), and the front end and HUD are placed by call site (each release's `k_ts2_ui_places`, in `config/<region>/overrides.inc`). Every screen is laid out for 16:9 |
 | Frame rate above 60 | Done by presenting above it: the toolkit's frame interpolation (`frame_interp`) draws the in-between frames while logic stays at 60. TS2 names its matrix registers (c60 projection, c64-c75) at its first present (`ts2_present` in `src/recomp_manual.c`). Leftovers are in `docs/enhancements.md` |
-| Online play | TS2 has system link (LAN) and no Xbox Live. Once the toolkit tunnels system link, little should be left to do here |
+| Online play | TS2 has System Link (LAN) and no Xbox Live. Done on Windows: the toolkit emulates the network card and hosts sessions over a LAN or the internet, and TS2 needed one seed (`0x0009D530`, PAL). macOS waits on the toolkit's card; USA is untried. `docs/multiplayer.md` |
 | Mods | Assets are in `data/*.pak`. Naming dumped textures by pak entry is this repo's job; the dump and replace is the toolkit's |
 | Cutscene skip | In-engine cutscenes: find where they start and whether the game already has a skip |
 
@@ -75,7 +75,13 @@ a profile and plays the start of Siberia (picks up a weapon, opens the pause
 menu) at 60 fps with no unresolved indirect calls. Every PAL override is ported
 (`config/us/overrides.inc`), and widescreen (camera, 71 of the 93 placement
 sites seen drawing) and frame interpolation were checked in captures. It has
-not been played by hand yet, nor past the start of Siberia.
+not been played by hand yet, nor past the start of Siberia, and System Link
+has not been opened in it.
+
+macOS (Oct 2026): the PAL release builds natively on Apple Silicon (Vulkan
+through MoltenVK) and a scripted run plays to Siberia at 60 fps with no
+unresolved indirect calls. System Link is Windows-only: the toolkit's network
+card is not built off Windows yet.
 
 One open issue: in one run out of two or three, the game has exited with code
 `0xFFFFFFFF` with no fault and no kernel call. `[EXIT]` lines in the log (the
@@ -98,7 +104,7 @@ game/                   the disc, supplied by the user        (ignored)
 src/recomp/gen/         the lifted C, i.e. game code           (ignored)
 src/recomp/ts2_region.h which release was lifted, written by build.py (ignored)
 .pipeline/              disasm, func_id and recomp stage output: PAL's, and USA's in .pipeline/us (ignored)
-build/                  CMake build; the exe is build/Release/split2_recomp.exe
+build/                  CMake build; the exe is build/Release/split2_recomp.exe (macOS: build/Release/split2_recomp)
 ```
 
 **Never commit `game/` or `src/recomp/`, and never paste lifted code into a
@@ -116,7 +122,8 @@ py -3 scripts/build.py --relift --from disasm # new seeds are applied by the dis
 cmake --build build --config Release          # recompile only
 ```
 
-On macOS (Apple Silicon) use `python3`, Homebrew's CMake and Ninja and the
+On macOS (Apple Silicon) use `python3` from a venv with `capstone` (Homebrew's
+Python refuses global installs), Homebrew's CMake, Ninja and OpenSSL, and the
 LunarG Vulkan SDK; `build.py` configures Ninja in `build/Release/`, so recompile
 with `cmake --build build/Release` and the executable is
 `build/Release/split2_recomp`. There is no launcher there: settings, System Link
@@ -129,12 +136,15 @@ input script walks a fresh save to Siberia:
 cd build/Release
 RECOMP_MUTE=1 RECOMP_FPS=5 \
 RECOMP_INPUT_SEQ="12000:start,16000:start,20000:start,24000:start,28000:a,34000:a,40000:a,46000:a,52000:a,58000:a,64000:a,70000:a" \
-timeout 90 ./split2_recomp.exe 2> run.log
+timeout 90 ./split2_recomp.exe 2> run.log      # macOS: ./split2_recomp (timeout from coreutils)
 ```
 
 An existing save changes the menu path ("overwrite?"), so the script only lands
 on a fresh save. Move `game/UDATA/4553000a` aside for a scripted run, and put it
-back afterwards: it may be the user's.
+back afterwards: it may be the user's. Or leave it alone and run from a copy of
+the game folder without `UDATA` (`RECOMP_GAME_DIR=<copy>`, made with `cp -c` on
+macOS, which costs nothing), with `RECOMP_SAVE_DIR=<fresh folder>` and
+`RECOMP_WINDOW_BACKGROUND=1` so the run neither touches saves nor takes focus.
 
 `xboxrecomp/scripts/run_and_report.py <exe> --seconds 60` runs and summarises a
 run in the same way. See the toolkit's CLAUDE.md for frame dumps
