@@ -123,6 +123,100 @@ def encode(samples, rate):
     return header(rate) + bytes(blocks)
 
 
+def encode_blocks(samples, starts=(0, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88)):
+    """Many blocks at once (numpy): `samples`, a 1-D int16 array, as
+    (nblocks, 36) bytes. The same greedy coding as encode(), every block in
+    parallel, each from the best of `starts` as its first step size."""
+    import numpy as np
+    steps = np.array(STEPS, dtype=np.int64)
+    adjust = np.array(INDEX_ADJUST * 2, dtype=np.int64)
+    x = np.asarray(samples, dtype=np.int64)
+    x = np.concatenate([x, np.zeros((-len(x)) % SAMPLES, dtype=np.int64)]).reshape(-1, SAMPLES)
+    nb = len(x)
+    codes = np.arange(16, dtype=np.int64)[:, None]
+    best_err = np.full(nb, np.inf)
+    best_codes = np.zeros((nb, SAMPLES - 1), dtype=np.int64)
+    best_start = np.zeros(nb, dtype=np.int64)
+    for start in starts:
+        pred = x[:, 0].copy()
+        index = np.full(nb, start, dtype=np.int64)
+        err = np.zeros(nb)
+        chosen = np.zeros((nb, SAMPLES - 1), dtype=np.int64)
+        for n in range(SAMPLES - 1):
+            step = steps[index][None, :]
+            delta = step >> 3
+            delta = delta + np.where(codes & 1, step >> 2, 0) + np.where(codes & 2, step >> 1, 0) + np.where(codes & 4, step, 0)
+            cand = np.clip(np.where(codes & 8, pred[None, :] - delta, pred[None, :] + delta), -32768, 32767)
+            e = np.abs(cand - x[None, :, n + 1])
+            k = np.argmin(e, axis=0)
+            pred = cand[k, np.arange(nb)]
+            err += e[k, np.arange(nb)].astype(np.float64) ** 2
+            index = np.clip(index + adjust[k], 0, 88)
+            chosen[:, n] = k
+        better = err < best_err
+        best_err[better] = err[better]
+        best_codes[better] = chosen[better]
+        best_start[better] = start
+    out = np.zeros((nb, BLOCK), dtype=np.uint8)
+    out[:, 0:2] = x[:, 0:1].astype("<i2").view(np.uint8).reshape(nb, 2)
+    out[:, 2] = best_start
+    for n in range(SAMPLES - 1):
+        at = 4 + (n // 8) * 4 + (n % 8) // 2
+        out[:, at] |= (best_codes[:, n] << ((n & 1) * 4)).astype(np.uint8)
+    return out
+
+
+def write_stereo_wav(path, left, right, rate, template):
+    """A stereo Xbox ADPCM .wav as TS2's music is: `template` (one of the
+    disc's music files) gives the RIFF and fmt chunks; the data is ours. A
+    stereo block is 72 bytes: both channels' 4-byte headers, then each group
+    of eight samples as four bytes of the left and four of the right."""
+    import numpy as np
+    lb, rb = encode_blocks(left), encode_blocks(right)
+    n = min(len(lb), len(rb))
+    blocks = np.zeros((n, 2 * BLOCK), dtype=np.uint8)
+    blocks[:, 0:4], blocks[:, 4:8] = lb[:n, 0:4], rb[:n, 0:4]
+    for g in range(8):
+        blocks[:, 8 + 8 * g:12 + 8 * g] = lb[:n, 4 + 4 * g:8 + 4 * g]
+        blocks[:, 12 + 8 * g:16 + 8 * g] = rb[:n, 4 + 4 * g:8 + 4 * g]
+    data = blocks.tobytes()
+    o, head = 12, bytearray(template[:12])
+    while o < len(template) - 8:
+        cid, size = template[o:o + 4], struct.unpack_from("<I", template, o + 4)[0]
+        if cid == b"data":
+            break
+        head += template[o:o + 8 + size + (size & 1)]
+        o += 8 + size + (size & 1)
+    fmt = head.find(b"fmt ")
+    struct.pack_into("<I", head, fmt + 12, rate)
+    struct.pack_into("<I", head, fmt + 16, rate * 2 * BLOCK // SAMPLES)
+    out = bytes(head) + b"data" + struct.pack("<I", len(data)) + data
+    out = out[:4] + struct.pack("<I", len(out) - 8) + out[8:]
+    with open(path, "wb") as f:
+        f.write(out)
+
+
+def decode_stereo_wav(data):
+    """A stereo Xbox ADPCM .wav to (rate, left, right) -- for checking."""
+    o = 12
+    rate = 0
+    while o < len(data) - 8:
+        cid, size = data[o:o + 4], struct.unpack_from("<I", data, o + 4)[0]
+        if cid == b"fmt ":
+            rate = struct.unpack_from("<I", data, o + 12)[0]
+        if cid == b"data":
+            body = data[o + 8:o + 8 + size]
+            break
+        o += 8 + size + (size & 1)
+    left, right = [], []
+    for b in range(0, len(body) - 2 * BLOCK + 1, 2 * BLOCK):
+        blk = body[b:b + 2 * BLOCK]
+        for ch, out in ((0, left), (1, right)):
+            mono = blk[4 * ch:4 * ch + 4] + b"".join(blk[8 + 8 * g + 4 * ch:12 + 8 * g + 4 * ch] for g in range(8))
+            out += decode(header(rate) + mono)[1]
+    return rate, left, right
+
+
 def resample(samples, src_rate, dst_rate):
     """Linear interpolation; enough for 11-44 kHz effects."""
     if src_rate == dst_rate or not samples:
