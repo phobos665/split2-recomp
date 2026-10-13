@@ -1,8 +1,8 @@
 /**
  * TimeSplitters 2 - Recompiled Game Entry Point
  *
- * This is the Windows executable that hosts the recompiled game code.
- * It performs the following initialization sequence:
+ * This is the executable that hosts the recompiled game code, on Windows,
+ * macOS and Linux. It performs the following initialization sequence:
  *
  * 1. Load the original XBE file from disk
  * 2. Initialize the Xbox memory layout (map data sections to original VAs)
@@ -10,7 +10,7 @@
  * 4. Initialize the kernel bridge (thunk table in Xbox memory)
  * 5. Set up game file paths for I/O redirection
  * 6. Initialize the stack pointer
- * 7. Install VEH crash handler for diagnostics
+ * 7. Install the fault handler (a VEH on Windows, signals on POSIX)
  * 8. Call the game's original entry point (recompiled)
  *
  * Customize this file for your game:
@@ -18,7 +18,12 @@
  *   - Set YOUR_GAME_XBE_PATH to where the XBE file lives
  *   - Set YOUR_GAME_DIR to the game data directory
  *   - Add any CRT global pre-initialization your game needs
- *   - Customize the VEH handler for game-specific crash diagnosis
+ *   - Customize the crash report (title_crash) for game-specific diagnosis
+ *
+ * What is not portable C -- where the executable is, where the output goes,
+ * message boxes, symbol names, the fault handler, and on POSIX which thread
+ * the title runs on -- is in the runtime (src/platform/host_main.h,
+ * src/platform/recomp_fault.h), not here.
  *
  * XBE Details (fill in from xbe_parser output):
  *   Title:       TimeSplitters 2
@@ -30,16 +35,24 @@
  *   Kernel imports: ??
  */
 
-#include <windows.h>
-#include <dbghelp.h>
+#include "platform/xbox_winnt.h"     /* <windows.h> on Windows, the NT types elsewhere */
+#include "platform/host_main.h"
+#include "platform/recomp_fault.h"
+#ifndef _WIN32
+#include "host.h"                     /* src/host: the main-thread loop */
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#ifdef __APPLE__
+#include <malloc/malloc.h>            /* malloc_zone_pressure_relief */
+#endif
 
 /* xboxrecomp runtime headers */
 #include <xbox/xboxrecomp.h>
 #include "xbox_watchpoint.h"
+#include "xbox_fault_route.h"
 
 /* Which release of the game src/recomp/gen was lifted from: written by
  * scripts/build.py with the lift (TS2_REGION_NAME, TS2_ENTRY_POINT). */
@@ -58,23 +71,19 @@
 
 /* ── Global register state (defined in xbox_memory_layout.c) ── */
 
-/* RECOMP_TLS is not optional here. The runtime defines these thread-local, and
- * a plain `extern` referencing a __declspec(thread) variable does not resolve
- * to the calling thread's copy -- it resolves to the image's TLS template. The
- * host side then writes g_esp somewhere the generated code never reads, so the
- * guest starts with every register at zero and faults immediately, having
- * apparently ignored the setup that visibly ran. */
-extern RECOMP_TLS uint32_t g_eax, g_ecx, g_edx, g_esp;
-extern RECOMP_TLS uint32_t g_ebx, g_esi, g_edi;
-extern RECOMP_TLS uint32_t g_seh_ebp;
-/* x87 and SSE state. Global for the same reason the volatile GPRs are: one
- * guest routine can lift to several C functions, so a value written in one
- * body is read in the next. Defined in xbox_memory_layout.c like the rest of
- * the register file. */
-extern RECOMP_TLS double g_fp_stack[8];
-extern RECOMP_TLS int g_fp_top;
-extern RECOMP_TLS uint16_t g_fp_control_word;
-extern RECOMP_TLS int g_fp_cmp;
+/* g_eax..g_edi, g_esp, g_seh_ebp and the x87 state (g_fp_stack, g_fp_top,
+ * g_fp_control_word, g_fp_cmp) come from xbox_memory_layout.h, through
+ * xboxrecomp.h above: fields of one thread-local struct, declared once in
+ * templates/runtime/recomp_cpu.h. Do not redeclare them here -- the names are
+ * macros, so it does not compile, and the hand-written declarations it
+ * replaces were how a register once came to be read from the wrong storage
+ * (a plain `extern` of a __declspec(thread) variable resolves to the image's
+ * TLS template, and the guest started with every register at zero).
+ *
+ * SSE state stays separate thread-locals. RECOMP_TLS is not optional here: a
+ * plain `extern` would resolve to the TLS template, as above. Global for the
+ * same reason the GPRs are: one guest routine can lift to several C
+ * functions, so a value written in one body is read in the next. */
 extern RECOMP_TLS RecompXmm g_xmm0, g_xmm1, g_xmm2, g_xmm3;
 extern RECOMP_TLS RecompXmm g_xmm4, g_xmm5, g_xmm6, g_xmm7;
 extern ptrdiff_t g_xbox_mem_offset;
@@ -102,6 +111,10 @@ void recomp_exit_trace_init(void);      /* src/kernel/exit_trace.c */
  * not need to link, so the kernel takes its interrupt line as a callback. */
 void xbox_SetApuInterruptSource(int (*pending)(void));
 
+/* Generated with the lifted code (recomp_dispatch.c); declared in
+ * recomp_types.h, which this file does not include. */
+int recomp_dispatch_init(void);
+
 static BOOL load_xbe(const char *path, void **out_data, size_t *out_size);
 
 /* ============================================================
@@ -111,21 +124,28 @@ static BOOL load_xbe(const char *path, void **out_data, size_t *out_size);
  * neither case is the working directory anything in particular. So the game
  * is looked for beside the executable rather than beside the caller:
  *
+ *   0. macOS, when the executable is inside a .app: <folder of the .app>/game,
+ *      then <the .app>/Contents/Resources/game
  *   1. <exe dir>\\game\\               -- what a distributed build looks like
  *   2. <exe dir>\\YOUR_GAME_DIR     -- the development tree, where the build
  *                                     sits several levels under the repo
+ *                                     (titles/<title>/build/<Config>/)
+ *   3. the same one level up        -- a single-configuration build
+ *                                     (Ninja: titles/<title>/build-mac/)
  *
- * RECOMP_GAME_DIR overrides both, for running one build against another copy
+ * RECOMP_GAME_DIR overrides all of them, for running one build against another copy
  * of the game files.
  * ============================================================ */
 
 static char g_game_dir[MAX_PATH];
 static char g_xbe_path[MAX_PATH];
 
+/* The paths below are written with backslashes, as Windows spells them;
+ * xbox_path_normalize turns them into forward slashes everywhere else and
+ * leaves them alone on Windows. */
 static BOOL file_exists(const char *path)
 {
-    DWORD a = GetFileAttributesA(path);
-    return a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
+    return host_file_exists(path);
 }
 
 /* Fills g_game_dir and g_xbe_path, or returns FALSE having left a message in
@@ -135,32 +155,67 @@ static BOOL find_game(char *tried, size_t tried_bytes)
 {
     char exe[MAX_PATH], dir[MAX_PATH], candidate[MAX_PATH];
     const char *env = getenv("RECOMP_GAME_DIR");
-    char *slash;
     int i;
 
     tried[0] = '\0';
     if (env && *env) {
         snprintf(g_game_dir, sizeof g_game_dir, "%s", env);
         snprintf(g_xbe_path, sizeof g_xbe_path, "%s\\default.xbe", env);
+        xbox_path_normalize(g_game_dir);
+        xbox_path_normalize(g_xbe_path);
         if (file_exists(g_xbe_path))
             return TRUE;
         snprintf(tried, tried_bytes, "RECOMP_GAME_DIR: %s", g_xbe_path);
         return FALSE;
     }
 
-    if (!GetModuleFileNameA(NULL, exe, (DWORD)sizeof exe))
+#ifdef __APPLE__
+    /* A macOS application bundle (scripts/make_macos_app.py): the game
+     * folder beside the .app first, then one inside it. */
+    {
+        char app[MAX_PATH];
+
+        if (host_app_bundle_dir(app, sizeof app)) {
+            for (i = 0; i < 2; i++) {
+                snprintf(candidate, sizeof candidate, "%s", app);
+                if (i == 0) {
+                    host_path_dirname(candidate);
+                    strncat(candidate, "/game", sizeof candidate - strlen(candidate) - 1);
+                } else {
+                    strncat(candidate, "/Contents/Resources/game",
+                            sizeof candidate - strlen(candidate) - 1);
+                }
+                snprintf(g_xbe_path, sizeof g_xbe_path, "%s/default.xbe", candidate);
+                if (file_exists(g_xbe_path)) {
+                    snprintf(g_game_dir, sizeof g_game_dir, "%s", candidate);
+                    return TRUE;
+                }
+                {
+                    size_t n = strlen(tried);
+                    snprintf(tried + n, tried_bytes - n, "%s%s", n ? "\n" : "", g_xbe_path);
+                }
+            }
+        }
+    }
+#endif
+
+    if (!host_exe_path(exe, sizeof exe))
         return FALSE;
     snprintf(dir, sizeof dir, "%s", exe);
-    slash = strrchr(dir, '\\');
-    if (slash)
-        *slash = '\0';
+    host_path_dirname(dir);
 
-    for (i = 0; i < 2; i++) {
+    for (i = 0; i < 3; i++) {
         if (i == 0)
             snprintf(candidate, sizeof candidate, "%s\\game", dir);
-        else
+        else if (i == 1)
             snprintf(candidate, sizeof candidate, "%s\\%s", dir, YOUR_GAME_DIR);
+        else if (strncmp(YOUR_GAME_DIR, "..\\", 3) == 0)
+            snprintf(candidate, sizeof candidate, "%s\\%s", dir, YOUR_GAME_DIR + 3);
+        else
+            break;
         snprintf(g_xbe_path, sizeof g_xbe_path, "%s\\default.xbe", candidate);
+        xbox_path_normalize(candidate);
+        xbox_path_normalize(g_xbe_path);
         if (file_exists(g_xbe_path)) {
             snprintf(g_game_dir, sizeof g_game_dir, "%s", candidate);
             return TRUE;
@@ -178,12 +233,16 @@ static BOOL find_game(char *tried, size_t tried_bytes)
 /* Recompiled entry point (generated by recomp pipeline) */
 extern void xbe_entry_point(void);
 
-/* ── VEH crash handler ─────────────────────────────────────── */
+/* ── Fault handling ────────────────────────────────────────── */
 
 /*
- * Vectored Exception Handler for crash diagnostics.
+ * The runtime catches every host fault (src/platform/recomp_fault.h) and
+ * hands it first to xbox_fault_route (src/kernel/xbox_fault_route.c), which
+ * services the faults that are meant to happen -- a watchpoint, a trapped
+ * device register, the rest of a 16 KB host page a 4 KB trap covered -- and
+ * then to title_crash below, the report for everything else.
  *
- * When the recompiled game hits an access violation, this handler prints
+ * When the recompiled game hits an access violation, the report prints
  * the faulting address, all Xbox register values, and a native stack trace.
  * This is your primary debugging tool during bring-up.
  *
@@ -194,14 +253,15 @@ extern void xbe_entry_point(void);
  */
 /* Name the guest function a fault happened in, and recover the call chain.
  *
- * Recompiled code faults as ordinary native code, so the exception record
- * carries a host RIP and nothing else -- there is no guest program counter to
- * report, and the host address changes every build. Two things recover the
- * guest view:
+ * Recompiled code faults as ordinary native code, so the fault carries a
+ * host program counter and nothing else -- there is no guest program counter
+ * to report, and the host address changes every build. Two things recover
+ * the guest view:
  *
  *   - every generated function is a real symbol in the image (sub_005A03C0
- *     and so on), so the linker's PDB already maps host address back to guest
- *     function. dbghelp turns an anonymous RIP into that name.
+ *     and so on), so the symbols already map host address back to guest
+ *     function: host_symbol_name turns an anonymous pc into that name
+ *     (dbghelp and the .pdb beside the .exe on Windows, dladdr elsewhere).
  *
  *   - every lifted call pushes its guest return address onto the guest stack
  *     before jumping, so the stack still holds the chain. Scanning up from esp
@@ -211,23 +271,15 @@ extern void xbe_entry_point(void);
  * with no reliable ebp chain, so there is nothing to walk. It over-reports,
  * since addresses from returned-from calls linger below esp, but naming the
  * guest function is the whole question at a fault.
- *
- * Requires linking dbghelp and keeping the .pdb beside the .exe.
  */
-static void print_guest_context(void *rip)
+static void print_guest_context(uintptr_t pc)
 {
-    /* SYMBOL_INFO is variable-length: the name is written past the struct, so
-     * it must be over-allocated with MaxNameLen set to the slack. */
-    char buf[sizeof(SYMBOL_INFO) + 256];
-    SYMBOL_INFO *sym = (SYMBOL_INFO *)buf;
-    DWORD64 disp = 0;
+    char name[256];
+    uintptr_t disp = 0;
 
-    memset(buf, 0, sizeof(buf));
-    sym->SizeOfStruct = sizeof(SYMBOL_INFO);
-    sym->MaxNameLen = 255;
-    if (SymFromAddr(GetCurrentProcess(), (DWORD64)(uintptr_t)rip, &disp, sym))
+    if (host_symbol_name(pc, name, sizeof name, &disp))
         fprintf(stderr, "  in %s+0x%llX\n",
-                sym->Name, (unsigned long long)disp);
+                name, (unsigned long long)disp);
 
     if (g_xbox_mem_offset && g_esp) {
         const uint32_t *sp =
@@ -253,90 +305,31 @@ static void print_guest_context(void *rip)
     }
 }
 
-/* Register pages the runtime deliberately makes fault, so a guest access to
- * them can be given hardware semantics instead of landing in plain memory.
- * Each has a handler in the runtime that decodes the faulting instruction,
- * performs the access and moves RIP past it; this handler's job is only to
- * route the fault to the right one. The pages are trapped only when the
- * matching switch is set (RECOMP_VBLANK, RECOMP_AC97_READY), so without it
- * these ranges never fault and this code is never reached. */
-#define GUEST_NV2A_BASE        0xFD000000u
-#define GUEST_NV2A_PCRTC_PAGE  0xFD600000u   /* interrupt status: write-trapped */
-#define GUEST_APU_REGS_BASE    0xFE800000u   /* APU registers: PAGE_NOACCESS   */
-#define GUEST_APU_REGS_SIZE    0x00030000u   /* the DSP memory above stays RAM */
-#define GUEST_AC97_PAGE        0xFEC00000u   /* codec / DSP command: write-trapped */
-
-static LONG route_device_fault(PEXCEPTION_POINTERS ep, uintptr_t fault_addr,
-                               int is_write)
+/* Every fault the route declined, except breakpoints. Say something about
+ * every one, not only access violations: a fault this stays silent on reads
+ * as the process simply vanishing -- an exit code and nothing in the log. The
+ * GPU register range used to be skipped outright, and Burnout 2's first run
+ * on a fresh machine died that way, in a write to the vblank interrupt-enable
+ * register. */
+static void title_crash(const recomp_fault *f)
 {
-    uint32_t va = (uint32_t)(fault_addr - (uintptr_t)g_xbox_mem_offset);
-
-    if (is_write && va >= GUEST_NV2A_PCRTC_PAGE && va < GUEST_NV2A_PCRTC_PAGE + 0x1000u) {
-        if (nv2a_intr_handle_write(ep->ContextRecord, fault_addr,
-                                   va - GUEST_NV2A_BASE,
-                                   (uintptr_t)g_xbox_mem_offset + GUEST_NV2A_BASE))
-            return EXCEPTION_CONTINUE_EXECUTION;
-    }
-    if (va >= GUEST_APU_REGS_BASE && va < GUEST_APU_REGS_BASE + GUEST_APU_REGS_SIZE) {
-        if (apu_hook_handle_mmio(ep->ContextRecord, fault_addr, va, is_write))
-            return EXCEPTION_CONTINUE_EXECUTION;
-    }
-    if (is_write && va >= GUEST_AC97_PAGE && va < GUEST_AC97_PAGE + 0x1000u) {
-        if (mcpx_ac97_handle_write(ep->ContextRecord, fault_addr,
-                                   va - GUEST_APU_REGS_BASE))
-            return EXCEPTION_CONTINUE_EXECUTION;
-    }
-    return EXCEPTION_CONTINUE_SEARCH;
-}
-
-static LONG CALLBACK veh_handler(PEXCEPTION_POINTERS ep)
-{
-    DWORD code = ep->ExceptionRecord->ExceptionCode;
-
-    /* Say something about every exception, not only access violations. A
-     * fault this handler stays silent on reads as the process simply
-     * vanishing: exit code 0xC0000005 and nothing in the log. The GPU
-     * register range used to be skipped here outright, and Burnout 2's first
-     * run on a fresh machine died that way, in a write to the vblank
-     * interrupt-enable register. Breakpoints and the debugger's thread-naming
-     * exception are the only ones not worth a line. */
-    /* A watchpoint stepping over the instruction it just trapped. This
-     * has to come first: it is a single-step exception this process
-     * asked for, not a fault, and reporting it would bury the watch
-     * output in noise. */
-    if (code == EXCEPTION_SINGLE_STEP && xbox_watch_handle_step(ep))
-        return EXCEPTION_CONTINUE_EXECUTION;
-
-    if (code == EXCEPTION_BREAKPOINT || code == 0x406D1388)
-        return EXCEPTION_CONTINUE_SEARCH;
-    if (code != EXCEPTION_ACCESS_VIOLATION) {
+    if (f->kind != RECOMP_FAULT_ACCESS) {
         fprintf(stderr, "[EXCEPTION] code 0x%08lX at RIP=0x%llX (first chance)\n",
-                (unsigned long)code,
-                (unsigned long long)ep->ContextRecord->Rip);
-        print_guest_context((void *)ep->ContextRecord->Rip);
+                (unsigned long)f->code,
+                (unsigned long long)f->pc);
+        print_guest_context(f->pc);
         fflush(stderr);
-        return EXCEPTION_CONTINUE_SEARCH;
+        return;
     }
 
     {
-        uintptr_t fault_addr = ep->ExceptionRecord->ExceptionInformation[1];
-        int is_write = ep->ExceptionRecord->ExceptionInformation[0] == 1;
-
-        /* An armed watchpoint, which protected the page on purpose.
-         * Checked before the device ranges because a watch is a
-         * deliberate trap and the device hooks would not know it. */
-        if (xbox_watch_handle_av(ep, fault_addr, is_write))
-            return EXCEPTION_CONTINUE_EXECUTION;
-
-        /* A trapped device register: serviced and resumed, not a crash. */
-        if (g_xbox_mem_offset &&
-            route_device_fault(ep, fault_addr, is_write) == EXCEPTION_CONTINUE_EXECUTION)
-            return EXCEPTION_CONTINUE_EXECUTION;
+        uintptr_t fault_addr = f->host_addr;
+        int is_write = f->is_write == 1;
 
         fprintf(stderr, "[CRASH] Access violation at RIP=0x%llX, fault addr=0x%llX (%s)\n",
-            (unsigned long long)ep->ContextRecord->Rip,
+            (unsigned long long)f->pc,
             (unsigned long long)fault_addr,
-            is_write ? "write" : "read");
+            f->is_write < 0 ? "access" : is_write ? "write" : "read");
         fprintf(stderr, "  Xbox regs: eax=0x%08X ecx=0x%08X edx=0x%08X esp=0x%08X\n",
             g_eax, g_ecx, g_edx, g_esp);
         fprintf(stderr, "  Xbox regs: ebx=0x%08X esi=0x%08X edi=0x%08X\n",
@@ -347,14 +340,14 @@ static LONG CALLBACK veh_handler(PEXCEPTION_POINTERS ep)
          * device page, this is the instruction form the runtime's decoder
          * did not know, which is exactly what has to be added to it. */
         {
-            const uint8_t *ip = (const uint8_t *)ep->ContextRecord->Rip;
+            const uint8_t *ip = (const uint8_t *)f->pc;
             int i;
             fprintf(stderr, "  host instruction:");
             for (i = 0; i < 12; i++)
                 fprintf(stderr, " %02X", ip[i]);
             fprintf(stderr, "\n");
         }
-        print_guest_context((void *)ep->ContextRecord->Rip);
+        print_guest_context(f->pc);
 
         /* Force the profile table out here, not at the next scheduled report.
          * The report interval means the file on disk lags the run, and the
@@ -383,108 +376,45 @@ static LONG CALLBACK veh_handler(PEXCEPTION_POINTERS ep)
 
         /* Print native stack return addresses for debugging, named.
          *
-         * The window is this module's own range. It used to be the preferred
-         * base, 0x140000000-0x150000000, which ASLR moves: the image loads
-         * near 0x7FF7..., so the loop matched nothing and every crash printed
-         * an empty list under this header. The header and the leading
+         * The window is this module's own range (host_module_range), not a
+         * preferred base, which ASLR moves. The header and the leading
          * "[i] 0x..." are kept as they were for anything that parses them. */
         {
-            uintptr_t *sp = (uintptr_t *)ep->ContextRecord->Rsp;
-            HMODULE mod = GetModuleHandleW(NULL);
-            const IMAGE_NT_HEADERS *nt = (const IMAGE_NT_HEADERS *)
-                ((const BYTE *)mod + ((const IMAGE_DOS_HEADER *)mod)->e_lfanew);
-            uintptr_t lo = (uintptr_t)mod;
-            uintptr_t hi = lo + nt->OptionalHeader.SizeOfImage;
+            const uintptr_t *sp = (const uintptr_t *)f->sp;
+            uintptr_t lo = 0, hi = 0;
             int shown = 0;
             fprintf(stderr, "  Native stack (first 8 return addrs):\n");
-            for (int i = 0; i < 256 && shown < 12; i++) {
-                char buf[sizeof(SYMBOL_INFO) + 256];
-                SYMBOL_INFO *sym = (SYMBOL_INFO *)buf;
-                DWORD64 disp = 0;
+            if (sp && host_module_range(&lo, &hi)) {
+                for (int i = 0; i < 256 && shown < 12; i++) {
+                    char name[256];
+                    uintptr_t disp = 0;
 
-                if (sp[i] < lo || sp[i] >= hi)
-                    continue;
-                memset(buf, 0, sizeof(buf));
-                sym->SizeOfStruct = sizeof(SYMBOL_INFO);
-                sym->MaxNameLen = 255;
-                if (SymFromAddr(GetCurrentProcess(), (DWORD64)sp[i], &disp, sym))
-                    fprintf(stderr, "    [%d] 0x%llX %s+0x%llX\n", i,
-                            (unsigned long long)sp[i], sym->Name,
-                            (unsigned long long)disp);
-                else
-                    fprintf(stderr, "    [%d] 0x%llX (module+0x%llX)\n", i,
-                            (unsigned long long)sp[i],
-                            (unsigned long long)(sp[i] - lo));
-                shown++;
+                    if (sp[i] < lo || sp[i] >= hi)
+                        continue;
+                    if (host_symbol_name(sp[i], name, sizeof name, &disp))
+                        fprintf(stderr, "    [%d] 0x%llX %s+0x%llX\n", i,
+                                (unsigned long long)sp[i], name,
+                                (unsigned long long)disp);
+                    else
+                        fprintf(stderr, "    [%d] 0x%llX (module+0x%llX)\n", i,
+                                (unsigned long long)sp[i],
+                                (unsigned long long)(sp[i] - lo));
+                    shown++;
+                }
             }
         }
         fflush(stderr);
     }
-
-    return EXCEPTION_CONTINUE_SEARCH;
 }
 
-/* ── WinMain ───────────────────────────────────────────────── */
+/* ── Start-up ──────────────────────────────────────────────── */
 
-/* ============================================================
- * Where the diagnostics go
- *
- * This is a windowed program, so a double-click gives it no console and
- * every printf would be thrown away -- which is the worst of both worlds:
- * no window full of text, and no record either. Three cases, in order:
- *
- *   1. Somebody redirected the output (a script capturing stderr to a file,
- *      a pipe). Those handles are already what was wanted: leave them.
- *   2. It was started from a terminal, which shares its console. Write
- *      there, so running it by hand behaves as it always has.
- *   3. It was double-clicked. Write to <executable>.log beside the program,
- *      truncated each run, so there is something to read after a crash.
- *
- * The log's path is remembered so a failure can name it in its message box:
- * "it did not start" is not a bug report, and the file is.
- * ============================================================ */
-
+/* Where the diagnostics go: host_setup_output (src/platform/host_main.h).
+ * A windowed program started by double-click has no console, so its output
+ * goes to <executable>.log unless it was redirected or started from a
+ * terminal. The log's path is remembered so a failure can name it in its
+ * message box: "it did not start" is not a bug report, and the file is. */
 static char g_log_path[MAX_PATH];
-
-static BOOL handle_is_real(DWORD which)
-{
-    HANDLE h = GetStdHandle(which);
-
-    if (h == NULL || h == INVALID_HANDLE_VALUE)
-        return FALSE;
-    return GetFileType(h) != FILE_TYPE_UNKNOWN;
-}
-
-static void setup_output(void)
-{
-    char exe[MAX_PATH];
-    char *dot;
-    FILE *f;
-
-    if (handle_is_real(STD_OUTPUT_HANDLE) || handle_is_real(STD_ERROR_HANDLE))
-        return;                                  /* redirected: leave it */
-
-    if (AttachConsole(ATTACH_PARENT_PROCESS)) {  /* started from a terminal */
-        freopen("CONOUT$", "w", stdout);
-        freopen("CONOUT$", "w", stderr);
-        return;
-    }
-
-    if (!GetModuleFileNameA(NULL, exe, (DWORD)sizeof exe))
-        return;
-    snprintf(g_log_path, sizeof g_log_path, "%s", exe);
-    dot = strrchr(g_log_path, '.');
-    if (dot && !strchr(dot, '\\'))
-        *dot = '\0';
-    strncat(g_log_path, ".log", sizeof g_log_path - strlen(g_log_path) - 1);
-
-    f = freopen(g_log_path, "w", stderr);
-    if (!f) {                                    /* read-only folder */
-        g_log_path[0] = '\0';
-        return;
-    }
-    freopen(g_log_path, "a", stdout);
-}
 
 /* Appended to a message box, when there is a file worth reading. */
 static void log_hint(char *buf, size_t bytes)
@@ -495,20 +425,20 @@ static void log_hint(char *buf, size_t bytes)
         snprintf(buf + n, bytes - n, "\n\nThere is more in:\n%s", g_log_path);
 }
 
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
-                   LPSTR lpCmdLine, int nCmdShow)
+/* The title, start to finish: the same on every host. On POSIX it runs on a
+ * thread of its own (host_main_posix), so the process's main thread is free
+ * for the window. */
+static int title_main(int argc, char **argv)
 {
     void *xbe_data = NULL;
     size_t xbe_size = 0;
 
-    (void)hInstance;
-    (void)hPrevInstance;
-    (void)lpCmdLine;
-    (void)nCmdShow;
+    (void)argc;
+    (void)argv;
 
     /* Before anything prints: a windowed program has nowhere to print
      * unless this says where. */
-    setup_output();
+    host_setup_output(g_log_path, sizeof g_log_path);
 
     /* Unbuffered output for immediate visibility during debugging, and so a
      * crash keeps the tail of the log rather than losing it in a buffer. */
@@ -518,13 +448,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     printf("=== TimeSplitters 2 (%s) - Static Recompilation ===\n", TS2_REGION_NAME);
     printf("Loading XBE...\n");
 
-    /* Install VEH handler (first handler in chain) */
-    /* Load symbols up front rather than from inside the handler: at fault
-     * time the process is already in a bad way, and SymInitialize
-     * allocates. Failure is not fatal -- the handler prints no name. */
-    SymSetOptions(SYMOPT_DEFERRED_LOADS | SYMOPT_UNDNAME);
-    SymInitialize(GetCurrentProcess(), NULL, TRUE);
-    AddVectoredExceptionHandler(1, veh_handler);
+    /* The fault handler, first in line: a VEH on Windows, signals on POSIX.
+     * It loads the symbols the report names functions with up front, since
+     * at fault time the process is already in a bad way. */
+    recomp_fault_install(xbox_fault_route, title_crash);
     /* And the other way a run ends: an exit nobody logged. Prints [EXIT]
      * with the code and both stacks before the process goes (exit_trace.c). */
     recomp_exit_trace_init();
@@ -541,7 +468,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                      "Looked for:\n%s", tried);
             fprintf(stderr, "%s\n", message);
             log_hint(message, sizeof message);
-            MessageBoxA(NULL, message, "TimeSplitters 2", MB_ICONERROR);
+            host_error_box("TimeSplitters 2", message);
             return 1;
         }
         printf("Game files: %s\n", g_game_dir);
@@ -549,8 +476,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             snprintf(message, sizeof message,
                      "Found the game at\n%s\nbut could not read default.xbe.",
                      g_game_dir);
+            fprintf(stderr, "%s\n", message);
             log_hint(message, sizeof message);
-            MessageBoxA(NULL, message, "TimeSplitters 2", MB_ICONERROR);
+            host_error_box("TimeSplitters 2", message);
             return 1;
         }
     }
@@ -559,15 +487,35 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     /* Step 2: Initialize Xbox memory layout */
     printf("Initializing Xbox memory layout...\n");
     if (!xbox_MemoryLayoutInit(xbe_data, xbe_size)) {
-        MessageBoxA(NULL, "Failed to initialize Xbox memory layout.\n"
-                    "The required virtual address range may be unavailable.",
-                    "Recomp", MB_ICONERROR);
+        static const char layout_failed[] =
+            "Failed to initialize Xbox memory layout.\n"
+            "The required virtual address range may be unavailable.";
+        fprintf(stderr, "%s\n", layout_failed);
+        host_error_box("Recomp", layout_failed);
         free(xbe_data);
         return 1;
     }
 
+    /* The layout has copied out everything it needs (headers, sections,
+     * certificate, TLS directory) into guest memory and its own statics,
+     * and nothing keeps a pointer into the file buffer, so let it go now
+     * rather than at exit: it is the whole XBE (45 MB on BLiNX). */
+    free(xbe_data);
+    xbe_data = NULL;
+#ifdef __APPLE__
+    /* macOS's allocator keeps a freed large block cached, still resident,
+     * for reuse: BLiNX's 42.7 MB stayed in the footprint as "Malloc Large
+     * (empty)" after the free. Ask it to hand cached memory back now. */
+    malloc_zone_pressure_relief(NULL, 0);
+#endif
+
     g_xbox_mem_offset = xbox_GetMemoryOffset();
     printf("Xbox memory mapped. Offset: 0x%llX\n", (unsigned long long)g_xbox_mem_offset);
+
+    /* The device registers the layout traps (the vblank interrupt page, the
+     * APU, AC'97), registered with the fault route that services them. Only
+     * a table: a range whose page is never trapped never faults. */
+    apu_fault_register();
 
     /* Step 3: Initialize Xbox kernel */
     printf("Initializing Xbox kernel replacement...\n");
@@ -719,10 +667,31 @@ static BOOL load_xbe(const char *path, void **out_data, size_t *out_size)
     return TRUE;
 }
 
+/* ── Entry points ──────────────────────────────────────────── */
+
+#ifdef _WIN32
+/* The windowed program's entry point. */
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                   LPSTR lpCmdLine, int nCmdShow)
+{
+    (void)hInstance;
+    (void)hPrevInstance;
+    (void)lpCmdLine;
+    (void)nCmdShow;
+    return title_main(__argc, __argv);
+}
+
 /* Console entry point (for debugging -- lets you see printf output) */
 int main(int argc, char **argv)
 {
-    (void)argc;
-    (void)argv;
-    return WinMain(GetModuleHandle(NULL), NULL, GetCommandLineA(), SW_SHOW);
+    return title_main(argc, argv);
 }
+#else
+/* The title runs on its own thread; this, the process's main thread, runs
+ * the host loop that every window needs on macOS (src/host). */
+int main(int argc, char **argv)
+{
+    static const host_loop loop = { recomp_host_loop_run, recomp_host_loop_quit };
+    return host_main_posix(argc, argv, title_main, &loop);
+}
+#endif

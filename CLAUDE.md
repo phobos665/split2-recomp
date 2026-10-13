@@ -116,6 +116,12 @@ py -3 scripts/build.py --relift --from disasm # new seeds are applied by the dis
 cmake --build build --config Release          # recompile only
 ```
 
+On macOS (Apple Silicon) use `python3`, Homebrew's CMake and Ninja and the
+LunarG Vulkan SDK; `build.py` configures Ninja in `build/Release/`, so recompile
+with `cmake --build build/Release` and the executable is
+`build/Release/split2_recomp`. There is no launcher there: settings, System Link
+included, come from the settings file or the environment.
+
 A run for testing. **Always muted** (`RECOMP_MUTE=1`), always time-limited. The
 input script walks a fresh save to Siberia:
 

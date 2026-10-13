@@ -11,3 +11,5 @@ build/
 *.log
 *.d3dcap
 __pycache__/
+
+xboxrecomp/
