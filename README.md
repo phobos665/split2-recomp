@@ -65,15 +65,16 @@ it, which takes longer. Later runs only recompile. The program ends up in
 | | Windows | macOS |
 | --- | --- | --- |
 | The game | `split2_recomp.exe` | `split2_recomp` |
-| Settings window, then the game | `split2_recomp_launcher.exe` | none yet |
+| Settings window, then the game | `split2_recomp_launcher.exe` | `split2_recomp_launcher` |
 
 If you cloned without `--recursive`, run `git submodule update --init --recursive`.
 
 ## Play
 
-On Windows, run `split2_recomp_launcher.exe` to choose settings and play, or
-`split2_recomp.exe` to start straight away. On macOS, run `split2_recomp`.
-You can make a shortcut to either from anywhere.
+Run the launcher (`split2_recomp_launcher.exe` on Windows, `split2_recomp_launcher`
+on macOS) to choose settings and play, or the game itself (`split2_recomp.exe`,
+`split2_recomp`) to start straight away. You can make a shortcut to either from
+anywhere.
 
 | Key | |
 | --- | --- |

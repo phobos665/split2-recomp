@@ -126,8 +126,8 @@ On macOS (Apple Silicon) use `python3` from a venv with `capstone` (Homebrew's
 Python refuses global installs), Homebrew's CMake, Ninja and OpenSSL, and the
 LunarG Vulkan SDK; `build.py` configures Ninja in `build/Release/`, so recompile
 with `cmake --build build/Release` and the executable is
-`build/Release/split2_recomp`. There is no launcher there: settings, System Link
-included, come from the settings file or the environment.
+`build/Release/split2_recomp`, with the launcher beside it
+(`split2_recomp_launcher`, SDL3 and CoreText since xboxrecomp #67).
 
 A run for testing. **Always muted** (`RECOMP_MUTE=1`), always time-limited. The
 input script walks a fresh save to Siberia:

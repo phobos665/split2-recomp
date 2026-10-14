@@ -256,8 +256,9 @@ def main() -> int:
         return fail("the build failed")
 
     print(f"\nbuilt {exe}")
-    if os.name == "nt":
-        print(f"settings window: {exe.with_name('split2_recomp_launcher.exe')}")
+    launcher = exe.with_name("split2_recomp_launcher" + (".exe" if os.name == "nt" else ""))
+    if launcher.is_file():
+        print(f"settings window: {launcher}")
     return 0
 
 

@@ -99,6 +99,9 @@ extern ptrdiff_t g_xbox_mem_offset;
  * folder at the root of this repository. */
 #define YOUR_GAME_XBE_PATH      "..\\..\\game\\default.xbe"
 #define YOUR_GAME_DIR            "..\\..\\game"
+/* The image the console boots. A disc whose default.xbe only picks a language
+ * and launches another image names that one here. */
+#define YOUR_GAME_XBE_NAME       "default.xbe"
 
 /* ── Forward declarations ──────────────────────────────────── */
 
@@ -160,7 +163,7 @@ static BOOL find_game(char *tried, size_t tried_bytes)
     tried[0] = '\0';
     if (env && *env) {
         snprintf(g_game_dir, sizeof g_game_dir, "%s", env);
-        snprintf(g_xbe_path, sizeof g_xbe_path, "%s\\default.xbe", env);
+        snprintf(g_xbe_path, sizeof g_xbe_path, "%s\\%s", env, YOUR_GAME_XBE_NAME);
         xbox_path_normalize(g_game_dir);
         xbox_path_normalize(g_xbe_path);
         if (file_exists(g_xbe_path))
@@ -185,7 +188,7 @@ static BOOL find_game(char *tried, size_t tried_bytes)
                     strncat(candidate, "/Contents/Resources/game",
                             sizeof candidate - strlen(candidate) - 1);
                 }
-                snprintf(g_xbe_path, sizeof g_xbe_path, "%s/default.xbe", candidate);
+                snprintf(g_xbe_path, sizeof g_xbe_path, "%s/%s", candidate, YOUR_GAME_XBE_NAME);
                 if (file_exists(g_xbe_path)) {
                     snprintf(g_game_dir, sizeof g_game_dir, "%s", candidate);
                     return TRUE;
@@ -213,7 +216,7 @@ static BOOL find_game(char *tried, size_t tried_bytes)
             snprintf(candidate, sizeof candidate, "%s\\%s", dir, YOUR_GAME_DIR + 3);
         else
             break;
-        snprintf(g_xbe_path, sizeof g_xbe_path, "%s\\default.xbe", candidate);
+        snprintf(g_xbe_path, sizeof g_xbe_path, "%s\\%s", candidate, YOUR_GAME_XBE_NAME);
         xbox_path_normalize(candidate);
         xbox_path_normalize(g_xbe_path);
         if (file_exists(g_xbe_path)) {
@@ -464,7 +467,7 @@ static int title_main(int argc, char **argv)
             snprintf(message, sizeof message,
                      "This needs the game's own files, which are not included.\n\n"
                      "Put them in a folder called \"game\" next to this program, so that\n"
-                     "\"game\\default.xbe\" exists, or set RECOMP_GAME_DIR to where they are.\n\n"
+                     "\"game\\" YOUR_GAME_XBE_NAME "\" exists, or set RECOMP_GAME_DIR to where they are.\n\n"
                      "Looked for:\n%s", tried);
             fprintf(stderr, "%s\n", message);
             log_hint(message, sizeof message);
@@ -474,7 +477,7 @@ static int title_main(int argc, char **argv)
         printf("Game files: %s\n", g_game_dir);
         if (!load_xbe(g_xbe_path, &xbe_data, &xbe_size)) {
             snprintf(message, sizeof message,
-                     "Found the game at\n%s\nbut could not read default.xbe.",
+                     "Found the game at\n%s\nbut could not read " YOUR_GAME_XBE_NAME ".",
                      g_game_dir);
             fprintf(stderr, "%s\n", message);
             log_hint(message, sizeof message);
