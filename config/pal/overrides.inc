@@ -110,6 +110,29 @@ void sub_00098F40(void) { ts2_gallery_draw(sub_00098F40_gen); }
 extern void sub_0008FAE0_gen(void);
 void sub_0008FAE0(void) { ts2_chars_item_draw(sub_0008FAE0_gen); }
 
+/* Loose mod files inside the paks (ts2_paks_* in recomp_manual.c, which
+ * says how the game finds a file). sub_00085DB0(path, into_memory, heap)
+ * mounts a pak into the table at 0x358A38 (25 records of 0x20, count at
+ * 0x358A18): the mods' files go into its directory there. sub_000864B0
+ * (name, buffer, size) seeks and reads a file and sub_00086880(name, buffer,
+ * size) starts an overlapped read of one (sub_00086970 polls it while
+ * 0x358D88 is set): a mod's file is read from the mod. sub_00086300 and
+ * sub_000860A0 are the game's lookups (P4CK, P8CK), which leave the record
+ * they found the file in at 0x358A30. */
+extern void sub_00086300(void);
+extern void sub_000860A0(void);
+const Ts2Paks k_ts2_paks = {
+    0x00358A38, 0x00358A18, 25,   /* the table, its count, its size */
+    0x00358A30, 0x00358D88,       /* the last lookup's record; a read pending */
+    sub_00086300, sub_000860A0,
+};
+extern void sub_00085DB0_gen(void);
+void sub_00085DB0(void) { ts2_paks_mount(sub_00085DB0_gen); }
+extern void sub_000864B0_gen(void);
+void sub_000864B0(void) { ts2_paks_read(sub_000864B0_gen); }
+extern void sub_00086880_gen(void);
+void sub_00086880(void) { ts2_paks_read_async(sub_00086880_gen); }
+
 /* The roster and the texture list are where config/pal/xbe_patches.json
  * moved them: the section TS2ROSTER at 0x004CE000 (the roster, 127 + 32
  * entries, at +0; the texture list, 548 + 32 entries from 0x004CF800, whose

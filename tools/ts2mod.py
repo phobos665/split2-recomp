@@ -1,9 +1,31 @@
-"""Build a TimeSplitters 2 mod folder for RECOMP_MODS from loose files.
+"""Make, build and check TimeSplitters 2 mods for RECOMP_MODS.
+
+A mod is a folder. The game (split2-recomp, PAL) reads loose files from it
+at run time and stacks every mod in RECOMP_MODS (docs/modding.md):
+
+  files/<path in a pak>                  that file in every pak that holds it,
+                                         and found in any level if no pak does
+  paks/<pak under data>/<path in a pak>  that file in that one pak
+  ts2/characters.ini                     characters the mod adds to the roster
+  data/<pak>                             a whole pak, as on the disc (optional)
+
+So the source folder below is already a mod. Three commands:
+
+  loose  copy a source to a mod folder as it is, with mod.json saying what is
+         in it, and (given the disc's data folder) the disc textures its models
+         need where the paks they go into lack them. No pak is rebuilt; mods
+         made this way stack. ts2kitbash's output is one already.
+  build  rebuild the paks a source changes, into data/<pak>: one folder that
+         works on its own, for a player who wants that. Whole paks do not
+         stack: the first mod with data/chr.pak wins it (loose files from
+         other mods still apply on top).
+  check  report what two or more mods both supply (and which one wins), their
+         characters.ini claims, and texture ids picked by two mods.
 
 A level does not load its characters from chr.pak: every story and arcade
 level pak carries its own copies (byte-identical, textures under the same
 global textures/NNNN.xbt numbers), so a changed character file has to go
-into every pak that holds it. This does that.
+into every pak that holds it. files/ does that.
 
 The source folder:
 
@@ -21,11 +43,17 @@ the pak lacks: files/textures/NNNN.xbt from the mod (new textures, numbered
 from 8000 by ts2gltf.py), else the disc's copy (chr.pak's), so a character
 built from two characters' pieces finds both sets of textures in a level.
 
-The output folder gets data/<pak> for each pak that changed, laid out as
-RECOMP_MODS expects, and mod.json saying what went where.
+For build, the output folder gets data/<pak> for each pak that changed,
+laid out as RECOMP_MODS expects, and mod.json saying what went where.
 
-  python3 tools/ts2mod.py build <source> game/data <out>
-  RECOMP_MODS=<out> ./split2_recomp
+  python3 tools/ts2mod.py loose <source> <mod> [--data game/data]
+  python3 tools/ts2mod.py build <source> game/data <mod>
+  python3 tools/ts2mod.py check <mod> [<mod> ...]
+  RECOMP_MODS=<mod>:<another mod> ./split2_recomp      (';' on Windows)
+
+At run time a name in files/ replaces a pak's copy only where that copy is
+as long as chr.pak's (textures/0478.xbt is another picture in
+story/l_20_ST.pak and arcade/l_43_AR.pak): use paks/<pak>/ for those.
 """
 
 import argparse
@@ -257,6 +285,229 @@ def cmd_build(args):
     print("%d paks written to %s" % (len(report["paks"]), args.out))
 
 
+LOOSE_TREES = ("files", "paks", "ts2")
+NAME_MAX = 47          # a P4CK name's room; the game compares no further
+SPARE_SLOTS = (127, 158)
+
+
+def loose_index(mod):
+    """What a mod folder holds: {"files": {name: path}, "paks": {pak: {name:
+    path}}, "ts2": {rel: path}, "data": {pak: path}}, names as spelled."""
+    return {"files": walk_files(os.path.join(mod, "files")),
+            "paks": pak_specific(mod) if os.path.isdir(os.path.join(mod, "paks")) else {},
+            "ts2": walk_files(os.path.join(mod, "ts2")),
+            "data": disc_paks(os.path.join(mod, "data"))}
+
+
+def write_manifest(mod, extra=None):
+    """mod.json: what a loose mod holds, for people and for ts2mod check. The
+    game does not read it."""
+    idx = loose_index(mod)
+    manifest = {"format": "split2-recomp loose mod",
+                "files": sorted(idx["files"]),
+                "paks": {p: sorted(names) for p, names in sorted(idx["paks"].items())},
+                "ts2": sorted(idx["ts2"]),
+                "data": sorted(idx["data"])}
+    manifest.update(extra or {})
+    with open(os.path.join(mod, "mod.json"), "w") as f:
+        json.dump(manifest, f, indent=1)
+    return manifest
+
+
+def check_names(idx, where):
+    bad = 0
+    names = [("files/" + n, n) for n in idx["files"]]
+    names += [("paks/%s/%s" % (p, n), n) for p, ns in idx["paks"].items() for n in ns]
+    for shown, n in names:
+        if len(n.encode("latin-1", "replace")) > NAME_MAX:
+            print("warning: %s/%s: a name in a pak is at most %d characters; the game leaves it out"
+                  % (where, shown, NAME_MAX), file=sys.stderr)
+            bad += 1
+        if n != n.lower():
+            print("warning: %s/%s: the disc's names are lower case, and an added file is "
+                  "looked up as the game spells it" % (where, shown), file=sys.stderr)
+    return bad
+
+
+def cmd_loose(args):
+    """Copy a source to a mod folder as it is (or, given the same folder,
+    leave it in place) and write mod.json; with --data, add the disc's copy
+    of each texture a model names where the pak it goes into lacks it."""
+    src, out = os.path.abspath(args.source), os.path.abspath(args.out)
+    if src != out:
+        for tree in LOOSE_TREES:
+            for rel, full in walk_files(os.path.join(src, tree)).items():
+                dest = os.path.join(out, tree, *rel.split("/"))
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                shutil.copyfile(full, dest)
+    idx = loose_index(out)
+    check_names(idx, out)
+    added = {}
+    if args.data:
+        paks = disc_paks(args.data)
+        by_lower = {rel.lower(): rel for rel in paks}
+        for p in idx["paks"]:
+            if p.lower() not in by_lower:
+                print("warning: paks/%s: no such pak under %s" % (p, args.data), file=sys.stderr)
+        disc = DiscTextures(paks)
+        dirs = {}
+
+        def names_in(rel):
+            if rel not in dirs:
+                _, entries, _ = ts2pak.read_pak(open(paks[rel], "rb").read())
+                dirs[rel] = {e["name"].lower() for e in entries}
+            return dirs[rel]
+
+        mod_tex = {n.lower() for n in idx["files"]}
+        # A model in paks/<pak>: that pak. In files/: every pak holding it.
+        jobs = [(p, n, path) for p, ns in idx["paks"].items() for n, path in ns.items()]
+        jobs += [(None, n, path) for n, path in idx["files"].items()]
+        for pak, name, path in jobs:
+            if not name.lower().endswith(".xbr"):
+                continue
+            if not pak:
+                targets = [rel for rel in paks if name.lower() in names_in(rel)]
+            elif pak.lower() in by_lower:
+                targets = [by_lower[pak.lower()]]
+            else:
+                targets = []
+            have_mod = mod_tex | ({n.lower() for n in idx["paks"].get(pak, {})} if pak else set())
+            for tid in xbr_texture_ids(open(path, "rb").read()):
+                tn = "textures/%04d.xbt" % tid
+                if tn in have_mod:
+                    continue
+                lacking = [rel for rel in targets if tn not in names_in(rel)]
+                if not lacking:
+                    continue
+                blob = disc.get(tn)
+                if blob is None:
+                    print("warning: %s names %s, which is neither in the mod nor on the disc"
+                          % (name, tn), file=sys.stderr)
+                    continue
+                rel_out = ("paks/%s/%s" % (pak, tn)) if pak else ("files/" + tn)
+                dest = os.path.join(out, *rel_out.split("/"))
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                with open(dest, "wb") as f:
+                    f.write(blob)
+                added.setdefault(rel_out, sorted(lacking))
+                (idx["paks"].setdefault(pak, {}) if pak else idx["files"])[tn] = dest
+                have_mod.add(tn)
+        for rel_out, where in sorted(added.items()):
+            print("%s: the disc's copy, for %s" % (rel_out, ", ".join(where)))
+    m = write_manifest(out, {"textures_from_disc": added} if added else None)
+    print("%s: %d files/, %d paks/ files in %d paks, %d ts2/ files%s" % (
+        out, len(m["files"]), sum(len(v) for v in m["paks"].values()), len(m["paks"]),
+        len(m["ts2"]), ", %d whole paks" % len(m["data"]) if m["data"] else ""))
+
+
+def read_ini_claims(path):
+    """[(section, chr id, slot)] from a characters.ini, slot "next" or an int."""
+    out, cur = [], None
+    for line in open(path, encoding="latin-1"):
+        s = line.strip()
+        if not s or s[0] in ";#":
+            continue
+        if s.startswith("["):
+            cur = {"title": s[1:].split("]")[0].strip(), "chr": None, "slot": None}
+            out.append(cur)
+            continue
+        if cur is None or "=" not in s:
+            continue
+        key, val = s.split("=", 1)
+        val = val.split(";")[0].strip()
+        key = key.strip()
+        if key == "chr":
+            cur["chr"] = int(val)
+        elif key == "slot":
+            cur["slot"] = "next" if val == "next" else int(val)
+    return out
+
+
+def file_bytes(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def cmd_check(args):
+    """What the mods would do together, in RECOMP_MODS order (first wins)."""
+    mods = [(m, loose_index(m)) for m in args.mods]
+    problems = 0
+    for m, idx in mods:
+        problems += check_names(idx, m)
+
+    # The same name for the same pak from two mods.
+    claims = {}
+    for k, (m, idx) in enumerate(mods):
+        for n, path in idx["files"].items():
+            claims.setdefault(n.lower(), []).append((k, None, path))
+        for p, ns in idx["paks"].items():
+            for n, path in ns.items():
+                claims.setdefault(n.lower(), []).append((k, p.lower(), path))
+    for name, who in sorted(claims.items()):
+        for i, (ka, pa, a) in enumerate(who):
+            for kb, pb, b in who[i + 1:]:
+                if ka == kb or (pa and pb and pa != pb):
+                    continue
+                scope = pa or pb or "every pak"
+                if os.path.getsize(a) == os.path.getsize(b) and file_bytes(a) == file_bytes(b):
+                    print("same: %s in %s, from %s and %s (identical)" % (name, scope, args.mods[ka],
+                                                                         args.mods[kb]))
+                    continue
+                problems += 1
+                note = ""
+                tid = name[len("textures/"):-len(".xbt")] if name.startswith("textures/") else ""
+                if tid.isdigit() and 8000 <= int(tid) <= 9999:
+                    note = " (a new texture id both picked by hash: rebuild one of them)"
+                print("CONFLICT: %s in %s: %s and %s differ; %s's is used%s"
+                      % (name, scope, args.mods[ka], args.mods[kb], args.mods[ka], note))
+
+    # Whole paks: the first mod that has one wins it.
+    whole = {}
+    for k, (m, idx) in enumerate(mods):
+        for p in idx["data"]:
+            whole.setdefault(p.lower(), []).append(k)
+    for p, ks in sorted(whole.items()):
+        if len(ks) > 1:
+            problems += 1
+            print("CONFLICT: data/%s is a whole pak in %s; only %s's is read"
+                  % (p, ", ".join(args.mods[k] for k in ks), args.mods[ks[0]]))
+
+    # characters.ini: chr ids and numbered slots, and the spare slots.
+    taken_chr, taken_slot, nexts = {}, {}, 0
+    for k, (m, idx) in enumerate(mods):
+        ini = idx["ts2"].get("characters.ini")
+        if not ini:
+            continue
+        for c in read_ini_claims(ini):
+            where = "[%s] in %s" % (c["title"], args.mods[k])
+            if c["chr"] in taken_chr:
+                problems += 1
+                print("CONFLICT: %s: chr id %s is already %s's; the game skips it"
+                      % (where, c["chr"], taken_chr[c["chr"]]))
+                continue
+            if isinstance(c["slot"], int) and c["slot"] in taken_slot:
+                problems += 1
+                print("CONFLICT: %s: roster slot %d is already %s's; the game skips it"
+                      % (where, c["slot"], taken_slot[c["slot"]]))
+                continue
+            taken_chr[c["chr"]] = where
+            if c["slot"] == "next":
+                nexts += 1
+            elif c["slot"] is not None:
+                taken_slot[c["slot"]] = where
+    spare = SPARE_SLOTS[1] - SPARE_SLOTS[0] + 1 - sum(SPARE_SLOTS[0] <= s <= SPARE_SLOTS[1]
+                                                       for s in taken_slot)
+    if taken_chr:
+        print("characters: %d, %d of them in the next free spare slot (%d free)"
+              % (len(taken_chr), nexts, spare))
+    if nexts > spare:
+        problems += 1
+        print("CONFLICT: %d characters want a spare slot and %d are free; the last %d are skipped"
+              % (nexts, spare, nexts - spare))
+    print("%d conflicts" % problems if problems else "no conflicts")
+    return 1 if problems else 0
+
+
 def cmd_where(args):
     """Which paks hold a file (or every file under a prefix)."""
     for rel, full in sorted(disc_paks(args.data).items()):
@@ -269,14 +520,21 @@ def cmd_where(args):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
-    p = sub.add_parser("build", help="write the changed paks of a mod")
+    p = sub.add_parser("loose", help="a mod of loose files, which stacks with others (the default)")
+    p.add_argument("source"); p.add_argument("out")
+    p.add_argument("--data", help="the disc's data folder: add disc textures the models need")
+    p.set_defaults(fn=cmd_loose)
+    p = sub.add_parser("build", help="write the changed paks of a mod: one self-contained folder")
     p.add_argument("source"); p.add_argument("data"); p.add_argument("out")
     p.set_defaults(fn=cmd_build)
+    p = sub.add_parser("check", help="what two or more mods both supply, in RECOMP_MODS order")
+    p.add_argument("mods", nargs="+")
+    p.set_defaults(fn=cmd_check)
     p = sub.add_parser("where", help="list the paks that hold a file")
     p.add_argument("data"); p.add_argument("name")
     p.set_defaults(fn=cmd_where)
     args = ap.parse_args()
-    args.fn(args)
+    sys.exit(args.fn(args) or 0)
 
 
 if __name__ == "__main__":

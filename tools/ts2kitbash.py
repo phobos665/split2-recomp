@@ -1,7 +1,8 @@
 """Build new TimeSplitters 2 characters from a recipe: one character's body
 with another's head, recoloured, with a character-select preview and a
-portrait, laid out as a ts2mod source folder, with the declaration that puts
-them on the roster (ts2/characters.ini).
+portrait, written as a mod of loose files (a ts2mod source folder, which the
+game reads as it is), with the declaration that puts them on the roster
+(ts2/characters.ini).
 
 A recipe is JSON:
 
@@ -44,8 +45,13 @@ l_38_ST.pak). ts2/characters.ini, which the game reads at start-up
 (docs/formats/roster.md, "Adding a character (mods)"), says which roster
 slot each one takes, its name, description, portrait and unlock rule.
 
-  python3 -I tools/ts2kitbash.py <recipe.json> game/data <work dir> <mod source>
-  python3 -I tools/ts2mod.py build <mod source> game/data <mod>
+The output folder is a mod as it stands (loose files, with mod.json): run
+the game with it, alone or with other mods, or make one self-contained
+folder of rebuilt paks out of it with ts2mod build.
+
+  python3 -I tools/ts2kitbash.py <recipe.json> game/data <work dir> <mod>
+  RECOMP_MODS=<mod>:<another mod> ./split2_recomp
+  python3 -I tools/ts2mod.py build <mod> game/data <self-contained mod>   (optional)
 """
 
 import argparse
@@ -59,6 +65,7 @@ import zlib
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, TOOLS)
+import ts2mod  # noqa: E402
 import ts2pak  # noqa: E402
 import ts2xbr  # noqa: E402
 import ts2xbt  # noqa: E402
@@ -275,7 +282,7 @@ def main():
     ap.add_argument("recipe")
     ap.add_argument("data", help="the disc's data folder (game/data)")
     ap.add_argument("work", help="scratch folder (unpacked paks, intermediates)")
-    ap.add_argument("out", help="ts2mod source folder to write")
+    ap.add_argument("out", help="the mod folder to write (loose files: a ts2mod source)")
     ap.add_argument("--blender", default=BLENDER)
     a = ap.parse_args()
 
@@ -312,7 +319,8 @@ def main():
     os.makedirs(os.path.join(a.out, "ts2"), exist_ok=True)
     with open(os.path.join(a.out, "ts2", "characters.ini"), "w", encoding="latin-1") as f:
         f.write(ini)
-    print("%d characters written to %s" % (len(recipe["characters"]), a.out))
+    ts2mod.write_manifest(a.out, {"made_by": "ts2kitbash", "characters": [c["name"] for c in recipe["characters"]]})
+    print("%d characters written to %s, a mod: RECOMP_MODS=%s" % (len(recipe["characters"]), a.out, a.out))
 
 
 if __name__ == "__main__":

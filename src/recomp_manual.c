@@ -855,11 +855,12 @@ static void ts2_ui_leave(void)
  * A mod adds a playable character by taking a roster slot and a chr id that
  * has files on the disc but nobody plays (docs/formats/roster.md, "Adding a
  * character (mods)"). It says so in <mod>/ts2/characters.ini, read once at
- * start-up from the first folder in RECOMP_MODS that has one (xboxrecomp
- * xbox_mods_find). Its model goes where that chr id's files are
- * (ob/chrs/chrNN.xbr in chr.pak, ob/chrincs/chrNN.xbr in chrinc.pak), its
- * portrait into the front end's pak, both through tools/ts2mod.py; this is
- * the part the game's tables need:
+ * start-up from every folder in RECOMP_MODS that has one, in that order
+ * (ts2_chars_resolve says who wins when two want the same thing). Its model
+ * goes where that chr id's files are (ob/chrs/chrNN.xbr in chr.pak,
+ * ob/chrincs/chrNN.xbr in chrinc.pak), its portrait into the front end's
+ * pak, as loose files the game is served from the mod (ts2_paks_mount,
+ * below); this is the part the game's tables need:
  *
  *   [Agent Static]
  *   slot = next               ; a spare slot (127-158 on PAL), or 0-126 to
@@ -941,17 +942,20 @@ typedef struct Ts2Roster {
 extern const Ts2Roster k_ts2_roster;
 
 /* xboxrecomp src/kernel: kernel_path.c, xbox_memory_layout.c */
-extern int      xbox_mods_find(const char *rel, char *out, size_t n);
+extern int         xbox_mods_count(void);
+extern const char *xbox_mods_dir(int i);
 extern uint32_t xbox_HeapAlloc(uint32_t size, uint32_t alignment);
 
 #define TS2_MEM16(a) (*(volatile int16_t *)((uintptr_t)(uint32_t)(a) + g_xbox_mem_offset))
 #define TS2_PTR8(a)  ((char *)((uintptr_t)(uint32_t)(a) + g_xbox_mem_offset))
 
-enum { TS2_CHR_MAX = 48, TS2_LANGS = 5, TS2_SLOT_NEXT = -2 };
+enum { TS2_CHR_MAX = 64, TS2_LANGS = 5, TS2_SLOT_NEXT = -2 };
 
 typedef struct Ts2Char {
     char title[64];
     int  slot, chr, stats_from, sounds_from, unlock;  /* unlock: -1 keep, else kind */
+    int  mod;                                         /* the RECOMP_MODS folder it came from */
+    int  skip;                                        /* lost to another, or invalid */
     char name[TS2_LANGS][64];                         /* Latin-1; "" = name[0] */
     char bio[TS2_LANGS][400];
     char portrait[128];
@@ -997,7 +1001,7 @@ static void ts2_to_latin1(char *out, size_t n, const char *in)
     out[o] = 0;
 }
 
-static void ts2_chars_read(const char *path)
+static void ts2_chars_read(const char *path, int mod)
 {
     static const char *const langs[TS2_LANGS] = { "en", "fr", "de", "it", "es" };
     FILE *f = fopen(path, "r");
@@ -1024,6 +1028,7 @@ static void ts2_chars_read(const char *path)
             memset(c, 0, sizeof *c);
             c->slot = c->chr = c->stats_from = c->sounds_from = -1;
             c->unlock = 1;
+            c->mod = mod;
             snprintf(c->title, sizeof c->title, "%s", ts2_trim(s + 1));
             if (strchr(c->title, ']'))
                 *strchr(c->title, ']') = 0;
@@ -1172,22 +1177,67 @@ static void ts2_char_apply(const Ts2Roster *r, const Ts2Char *c)
             (unsigned)TS2_MEM32(entry + 8), (unsigned)TS2_MEM32(entry + 0x0C));
 }
 
-/* A section's slot, `slot = next` given the first spare slot no other
- * section names; -1 when there is none left or the slot is out of range. */
-static int ts2_chars_slot(const Ts2Roster *r, int i)
+/* Every mod's sections, merged. A section is skipped, with a line saying
+ * why, when its chr id or slot is out of range, when an earlier section
+ * (an earlier mod in RECOMP_MODS, or earlier in the same file) already has
+ * its chr id, or when its numbered slot is already an earlier section's.
+ * Then `slot = next` sections, in the same order, take the free spare slots
+ * no remaining section names, until the 32 run out. Numbered slots are
+ * placed first so a later mod's `slot = 130` does not lose to an earlier
+ * mod's `next`, which can take another spare slot instead. */
+static void ts2_chars_resolve(const Ts2Roster *r)
 {
-    int slot, j, taken;
+    int i, j, slot;
 
-    if (g_ts2_chars[i].slot != TS2_SLOT_NEXT)
-        return g_ts2_chars[i].slot >= 0 && g_ts2_chars[i].slot < r->roster_count
-               ? g_ts2_chars[i].slot : -1;
-    for (slot = r->spare_first; slot < r->roster_count; slot++) {
-        for (taken = 0, j = 0; j < g_ts2_char_count && !taken; j++)
-            taken = j != i && g_ts2_chars[j].slot == slot;
-        if (!taken)
-            return g_ts2_chars[i].slot = slot;
+    for (i = 0; i < g_ts2_char_count; i++) {
+        Ts2Char *c = &g_ts2_chars[i];
+        if (c->chr < 0 || c->chr >= r->def_count ||
+            (c->slot != TS2_SLOT_NEXT && (c->slot < 0 || c->slot >= r->roster_count))) {
+            fprintf(stderr, "[TS2-CHR] %s (mod %d): needs slot 0-%d or next (a free spare "
+                    "slot, %d-%d) and chr 0-%d; skipped\n", c->title, c->mod,
+                    r->roster_count - 1, r->spare_first, r->roster_count - 1, r->def_count - 1);
+            c->skip = 1;
+            continue;
+        }
+        for (j = 0; j < i && !c->skip; j++) {
+            const Ts2Char *o = &g_ts2_chars[j];
+            if (o->skip)
+                continue;
+            if (o->chr == c->chr) {
+                fprintf(stderr, "[TS2-CHR] %s (mod %d, %s): chr id %d is already [%s]'s "
+                        "(mod %d, %s); skipped. One of the two needs another chr id.\n",
+                        c->title, c->mod, xbox_mods_dir(c->mod), c->chr, o->title, o->mod,
+                        xbox_mods_dir(o->mod));
+                c->skip = 1;
+            } else if (c->slot != TS2_SLOT_NEXT && o->slot == c->slot) {
+                fprintf(stderr, "[TS2-CHR] %s (mod %d, %s): roster slot %d is already [%s]'s "
+                        "(mod %d, %s); skipped. slot = next takes a free one.\n", c->title,
+                        c->mod, xbox_mods_dir(c->mod), c->slot, o->title, o->mod,
+                        xbox_mods_dir(o->mod));
+                c->skip = 1;
+            }
+        }
     }
-    return -1;
+    for (i = 0; i < g_ts2_char_count; i++) {
+        Ts2Char *c = &g_ts2_chars[i];
+        if (c->skip || c->slot != TS2_SLOT_NEXT)
+            continue;
+        for (slot = r->spare_first; slot < r->roster_count; slot++) {
+            int taken = 0;
+            for (j = 0; j < g_ts2_char_count && !taken; j++)
+                taken = j != i && !g_ts2_chars[j].skip && g_ts2_chars[j].slot == slot;
+            if (!taken)
+                break;
+        }
+        if (slot < r->roster_count) {
+            c->slot = slot;
+        } else {
+            fprintf(stderr, "[TS2-CHR] %s (mod %d, %s): every spare slot (%d-%d) is taken; "
+                    "skipped\n", c->title, c->mod, xbox_mods_dir(c->mod), r->spare_first,
+                    r->roster_count - 1);
+            c->skip = 1;
+        }
+    }
 }
 
 /* The shown entries (unlock kind not 0) first, in their order, then the
@@ -1224,37 +1274,47 @@ static void ts2_chars_compact(const Ts2Roster *r)
             shown, n, r->roster_count);
 }
 
-/* The game's main(argc, argv): the tables are patched before it reads them. */
+static void ts2_paks_init(void);
+
+/* The game's main(argc, argv): the mods are indexed and the tables patched
+ * before it reads them. */
 static void ts2_chars_main(void (*main_fn)(void))
 {
     const Ts2Roster *r = &k_ts2_roster;
-    char path[1024];
-    int i, applied = 0, mod = xbox_mods_find("ts2/characters.ini", path, sizeof path);
+    int i, m, files = 0, applied = 0;
 
-    if (mod >= 0) {
+    ts2_paks_init();
+    for (m = 0; m < xbox_mods_count(); m++) {
+        char path[1024];
+        FILE *f;
+        snprintf(path, sizeof path, "%s/ts2/characters.ini", xbox_mods_dir(m));
+        f = fopen(path, "r");
+        if (!f)
+            continue;
+        fclose(f);
+        files++;
         if (!r->roster) {
             fprintf(stderr, "[TS2-CHR] %s: the roster has not been found in this "
                     "release; no characters added\n", path);
-        } else {
-            fprintf(stderr, "[TS2-CHR] characters from %s (mod %d)\n", path, mod);
-            ts2_chars_read(path);
-            for (i = 0; i < g_ts2_char_count; i++) {
-                const Ts2Char *c = &g_ts2_chars[i];
-                if (ts2_chars_slot(r, i) < 0 || c->chr < 0 || c->chr >= r->def_count) {
-                    fprintf(stderr, "[TS2-CHR] %s: needs slot 0-%d or next (a free spare "
-                            "slot, %d-%d) and chr 0-%d; skipped\n", c->title,
-                            r->roster_count - 1, r->spare_first, r->roster_count - 1,
-                            r->def_count - 1);
-                    continue;
-                }
-                ts2_char_apply(r, c);
-                applied++;
-            }
-            if (applied)
-                ts2_chars_compact(r);
+            continue;
         }
-        fflush(stderr);
+        fprintf(stderr, "[TS2-CHR] characters from %s (mod %d)\n", path, m);
+        ts2_chars_read(path, m);
     }
+    if (g_ts2_char_count) {
+        ts2_chars_resolve(r);
+        for (i = 0; i < g_ts2_char_count; i++) {
+            if (g_ts2_chars[i].skip)
+                continue;
+            ts2_char_apply(r, &g_ts2_chars[i]);
+            applied++;
+        }
+        if (applied)
+            ts2_chars_compact(r);
+        fprintf(stderr, "[TS2-CHR] %d of %d characters, from %d mods, added\n", applied,
+                g_ts2_char_count, files);
+    }
+    fflush(stderr);
     main_fn();
 }
 
@@ -1340,6 +1400,762 @@ static void ts2_gallery_draw(void (*draw)(void))
     TS2_MEMF(r->gallery_scale) = scale * (float)g_ts2_gallery_base / (float)g_ts2_gallery_cols;
     draw();
     TS2_MEMF(r->gallery_scale) = scale;
+}
+
+/* ── TimeSplitters 2: loose mod files inside the paks ────────── */
+
+/*
+ * Every file the game reads (models, textures, sounds, levels) is inside a
+ * .pak on the disc, and a level does not share them: each story and arcade
+ * level pak carries its own copy of every character in it. The toolkit's
+ * RECOMP_MODS replaces whole files, so a mod used to be a set of rebuilt
+ * paks, and two mods that both touched chr.pak could not both apply. Here a
+ * mod folder may also hold single files from inside paks, laid out as the
+ * tools/ts2mod.py source is:
+ *
+ *   files/<path in a pak>                that file, in whichever pak holds it
+ *   paks/<pak under data>/<path in a pak>  that file in that pak only
+ *                                         (paks/chr.pak/ob/chrs/chr71.xbr)
+ *
+ * and every RECOMP_MODS folder's are served at once. For one name in one
+ * pak the first mod in RECOMP_MODS that supplies it wins, a mod's paks/<pak>
+ * before its files/, then the pak's own copy (which may itself be a whole
+ * pak from a mod: the loose files stack on top of it).
+ *
+ * How the game finds a file (code, PAL): sub_00085DB0 mounts a pak -- opens
+ * it, reads its directory into memory and fills one 32-byte record of the
+ * table at 0x358A38 (count at 0x358A18): +0 the open file, +0xC the entry
+ * count, +0x10 the whole pak's address when it is read into memory (the
+ * animation paks), +0x14 a P4CK directory (60-byte entries: name[48],
+ * position, length, packed length) or +0x18 a P8CK one (12-byte entries:
+ * name pointer, length, position, sorted by name: it is binary searched),
+ * +0x1C the pak's path. sub_00086300 and sub_000860A0 look a name up in
+ * every mounted P4CK and P8CK directory and return the entry, leaving the
+ * record that held it in 0x358A30. Everything that reads a file takes its
+ * length and position from that entry, through four functions only:
+ * sub_00086430 (the length, for the buffer), sub_000863C0 (the address in
+ * memory, for a pak read into memory), sub_000864B0 (seek and read) and
+ * sub_00086880 (an overlapped read, for the character-select previews and
+ * streamed loads). Nothing else touches the table.
+ *
+ * So a mod's file goes into the directory itself, as the pak is mounted
+ * (ts2_paks_mount): a pak's entry for it gets the mod file's length (so the
+ * size the game allocates is right everywhere) and a position that is no
+ * offset in the pak; a name the pak lacks gets a new entry (a copy of the
+ * directory with it inserted in order). A pak read into memory gets a
+ * position that points at a copy of the file in guest memory, so
+ * sub_000863C0 hands that out with no hook. The two read functions are
+ * wrapped (ts2_paks_read, ts2_paks_read_async): they ask the game's own
+ * lookups which entry the name resolves to, and serve the mod's file when it
+ * is one of these.
+ *
+ * Where files/ applies. Texture numbers are global, but textures/0478.xbt
+ * is another picture in story/l_20_ST.pak and arcade/l_43_AR.pak than in
+ * chr.pak (the only clash among the disc's textures and models: every other
+ * name has one content across all 68 paks). A files/ entry therefore
+ * replaces a pak's copy only when that copy is as long as chr.pak's (read
+ * from chr.pak's directory once at start-up); a name chr.pak lacks is
+ * replaced everywhere. For a clashing name, use paks/<pak>/. A files/ name
+ * a pak lacks is added to every P8CK pak not read into memory (level paks,
+ * chr, gun, sounds), so the game finds it whichever level is loaded; P4CK
+ * paks are searched before P8CK ones whatever their mount order, so a copy
+ * added to them would hide a level's own. paks/<pak>/ adds to that pak
+ * whatever its kind.
+ *
+ * The mods are indexed once, at start-up (xboxrecomp xbox_mods_walk); a
+ * mount only compares the pak's directory against that index, and a read
+ * opens the one host file it needs.
+ */
+typedef struct Ts2Paks {
+    uint32_t table;          /* the mounted paks: 32-byte records (above) */
+    uint32_t count;          /* dword: records in use */
+    int      max;            /* records the table holds */
+    uint32_t current;        /* dword: the record of the last lookup's file */
+    uint32_t read_pending;   /* dword: sub_00086880 issued a read the game still polls */
+    void   (*find_p4)(void); /* (name): its P4CK entry in any mounted pak, or 0 */
+    void   (*find_p8)(void); /* (name): its P8CK entry, or 0 */
+} Ts2Paks;
+
+/* Each release's, in its config/<region>/overrides.inc; table 0 means not
+ * found in that release yet, and nothing here runs. */
+extern const Ts2Paks k_ts2_paks;
+
+/* xboxrecomp src/kernel/kernel.h */
+typedef void (*xbox_mods_walk_fn)(const char *rel, const char *host_path,
+                                  unsigned long long size, void *ctx);
+extern int         xbox_mods_walk(int mod, const char *sub, xbox_mods_walk_fn fn, void *ctx);
+#ifdef _WIN32
+extern int xbox_translate_path(const char *xbox_path, wchar_t *host_path_buf, unsigned long buf_size);
+#else
+extern int xbox_translate_path(const char *xbox_path, char *host_path_buf, uint32_t buf_size);
+#endif
+
+enum {
+    TS2_PAK_NAME = 48,          /* a P4CK name's room, and as much as the lookups compare */
+    TS2_PAK_RECORDS = 32,       /* at least the game's table (25) */
+    TS2_PAK_FILE_MAX = 64 << 20
+};
+#define TS2_PAK_MOD_POS 0x80000000u   /* a mod file's position: no offset in any pak */
+
+typedef struct Ts2ModFile {
+    char     name[TS2_PAK_NAME];   /* its path in a pak, as the mod spells it */
+    char     lower[TS2_PAK_NAME];  /* the same, lower case: what is compared */
+    char     pak[96];              /* paks/<this>: "chr.pak", "arcade/l_101.pak" (lower
+                                    * case); "" for files/ */
+    char    *host;
+    uint32_t size;
+    int      mod;
+    int      ref_len;              /* files/: chr.pak's copy's length; -1 if it has none */
+    uint32_t guest_name;           /* copies in guest memory, made when first needed */
+    uint32_t guest_data;
+} Ts2ModFile;
+
+typedef struct Ts2PakRec {
+    uint32_t  dir, count;         /* the directory and count as last patched */
+    uint32_t  buf, buf_bytes;     /* guest copy of a directory that gained entries */
+    int       n, cap;             /* entries served from mods */
+    uint32_t *entry;
+    int      *file;
+    uint32_t *pos;                /* what was written to each, to tell a re-read apart */
+} Ts2PakRec;
+
+static Ts2ModFile *g_ts2_mf;
+static int         g_ts2_mf_count, g_ts2_mf_cap;
+static int         g_ts2_paks_ready;
+static int         g_ts2_paks_live;      /* some mounted entry is a mod's */
+static Ts2PakRec   g_ts2_recs[TS2_PAK_RECORDS];
+
+static void ts2_lower(char *out, size_t n, const char *in)
+{
+    size_t i;
+    for (i = 0; in[i] && i + 1 < n; i++)
+        out[i] = (char)(in[i] >= 'A' && in[i] <= 'Z' ? in[i] - 'A' + 'a' : in[i]);
+    out[i] = 0;
+}
+
+static void ts2_mf_add(const char *name, const char *pak, const char *host,
+                       unsigned long long size, int mod)
+{
+    Ts2ModFile *f;
+
+    if (strlen(name) >= TS2_PAK_NAME || strlen(pak) >= sizeof f->pak) {
+        fprintf(stderr, "[TS2-MODS] %s: a name in a pak is at most %d characters; left out\n",
+                host, TS2_PAK_NAME - 1);
+        return;
+    }
+    if (size > TS2_PAK_FILE_MAX) {
+        fprintf(stderr, "[TS2-MODS] %s: over %d MB; left out\n", host, TS2_PAK_FILE_MAX >> 20);
+        return;
+    }
+    if (g_ts2_mf_count == g_ts2_mf_cap) {
+        int cap = g_ts2_mf_cap ? g_ts2_mf_cap * 2 : 256;
+        Ts2ModFile *grown = (Ts2ModFile *)realloc(g_ts2_mf, (size_t)cap * sizeof *grown);
+        if (!grown)
+            return;
+        g_ts2_mf = grown;
+        g_ts2_mf_cap = cap;
+    }
+    f = &g_ts2_mf[g_ts2_mf_count];
+    memset(f, 0, sizeof *f);
+    snprintf(f->name, sizeof f->name, "%s", name);
+    ts2_lower(f->lower, sizeof f->lower, name);
+    ts2_lower(f->pak, sizeof f->pak, pak);
+    f->host = (char *)malloc(strlen(host) + 1);
+    if (!f->host)
+        return;
+    strcpy(f->host, host);
+    f->size = (uint32_t)size;
+    f->mod = mod;
+    f->ref_len = -1;
+    g_ts2_mf_count++;
+}
+
+static void ts2_mf_walk_files(const char *rel, const char *host, unsigned long long size, void *ctx)
+{
+    ts2_mf_add(rel, "", host, size, *(const int *)ctx);
+}
+
+/* paks/<pak path under data, ending .pak>/<path in that pak> */
+static void ts2_mf_walk_paks(const char *rel, const char *host, unsigned long long size, void *ctx)
+{
+    const char *p = rel;
+
+    for (;;) {
+        const char *slash = strchr(p, '/');
+        if (!slash)
+            break;
+        if (slash - p >= 4) {
+            char ext[5];
+            ts2_lower(ext, sizeof ext, slash - 4);
+            if (!strncmp(ext, ".pak", 4)) {
+                char pak[128];
+                snprintf(pak, sizeof pak, "%.*s", (int)(slash - rel), rel);
+                ts2_mf_add(slash + 1, pak, host, size, *(const int *)ctx);
+                return;
+            }
+        }
+        p = slash + 1;
+    }
+    fprintf(stderr, "[TS2-MODS] %s: under paks/ but not in a <name>.pak folder; left out\n", host);
+}
+
+/* By name, then mod (the first in RECOMP_MODS first), then paks/ before files/. */
+static int ts2_mf_order(const void *pa, const void *pb)
+{
+    const Ts2ModFile *a = (const Ts2ModFile *)pa, *b = (const Ts2ModFile *)pb;
+    int c = strcmp(a->lower, b->lower);
+
+    if (c)
+        return c;
+    if (a->mod != b->mod)
+        return a->mod < b->mod ? -1 : 1;
+    if (!a->pak[0] != !b->pak[0])
+        return a->pak[0] ? -1 : 1;
+    return strcmp(a->pak, b->pak);
+}
+
+/* The first mod file of that (lower-case) name, or -1. */
+static int ts2_mf_first(const char *lower)
+{
+    int lo = 0, hi = g_ts2_mf_count;
+
+    while (lo < hi) {
+        int mid = (lo + hi) / 2;
+        if (strcmp(g_ts2_mf[mid].lower, lower) < 0)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo < g_ts2_mf_count && !strcmp(g_ts2_mf[lo].lower, lower) ? lo : -1;
+}
+
+/* Which mod file serves `lower` in `pak`: the first, in RECOMP_MODS order,
+ * that is paks/<pak>/'s, or files/'s where files/ applies. have: the pak
+ * holds that name already, have_len long. may_add: files/ may add a name
+ * to this pak. -1 for none. */
+static int ts2_mf_pick(int first, const char *pak, int have, uint32_t have_len, int may_add)
+{
+    int i;
+
+    for (i = first; i >= 0 && i < g_ts2_mf_count &&
+                    !strcmp(g_ts2_mf[i].lower, g_ts2_mf[first].lower); i++) {
+        const Ts2ModFile *f = &g_ts2_mf[i];
+        if (f->pak[0]) {
+            if (!strcmp(f->pak, pak))
+                return i;
+        } else if (have ? (f->ref_len < 0 || (uint32_t)f->ref_len == have_len) : may_add) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int ts2_file_same(const char *a, const char *b, uint32_t size)
+{
+    FILE *fa = fopen(a, "rb"), *fb = fopen(b, "rb");
+    char ba[65536], bb[65536];
+    int same = fa && fb;
+
+    while (same && size) {
+        size_t n = size < sizeof ba ? size : sizeof ba;
+        same = fread(ba, 1, n, fa) == n && fread(bb, 1, n, fb) == n && !memcmp(ba, bb, n);
+        size -= (uint32_t)n;
+    }
+    if (fa) fclose(fa);
+    if (fb) fclose(fb);
+    return same;
+}
+
+/* chr.pak's lengths, as the game will see it (a mod's whole chr.pak if one
+ * has it), for the files/ rule above. */
+static void ts2_paks_reference(void)
+{
+    unsigned char head[20];
+    uint32_t dir_off, count, names_off, names_len, k;
+    unsigned char *names = NULL, *dir = NULL;
+    FILE *f = NULL;
+    int i, any = 0;
+
+    for (i = 0; i < g_ts2_mf_count && !any; i++)
+        any = !g_ts2_mf[i].pak[0];
+    if (!any)
+        return;
+    {
+#ifdef _WIN32
+        wchar_t host[1024];
+        if (xbox_translate_path("D:\\data\\chr.pak", host, 1024))
+            f = _wfopen(host, L"rb");
+#else
+        char host[1024];
+        if (xbox_translate_path("D:\\data\\chr.pak", host, sizeof host))
+            f = fopen(host, "rb");
+#endif
+    }
+    if (!f || fread(head, 1, sizeof head, f) != sizeof head || memcmp(head, "P8CK", 4)) {
+        fprintf(stderr, "[TS2-MODS] cannot read chr.pak's directory: files/ replaces every "
+                "copy of a name\n");
+        if (f)
+            fclose(f);
+        return;
+    }
+    memcpy(&dir_off, head + 4, 4);
+    memcpy(&count, head + 8, 4);
+    memcpy(&names_off, head + 12, 4);
+    memcpy(&names_len, head + 16, 4);
+    names = (unsigned char *)malloc((size_t)names_len + 1);
+    dir = (unsigned char *)malloc((size_t)count * 12 + 1);
+    if (names && dir && count < 0x100000 && names_len < 0x1000000 &&
+        !fseek(f, (long)names_off, SEEK_SET) && fread(names, 1, names_len, f) == names_len &&
+        !fseek(f, (long)dir_off, SEEK_SET) && fread(dir, 1, (size_t)count * 12, f) == count * 12) {
+        names[names_len] = 0;
+        for (k = 0; k < count; k++) {
+            uint32_t name_off, len;
+            char lower[TS2_PAK_NAME];
+            int first;
+            memcpy(&name_off, dir + 12 * k, 4);
+            memcpy(&len, dir + 12 * k + 4, 4);
+            if (name_off >= names_len)
+                continue;
+            ts2_lower(lower, sizeof lower, (const char *)names + name_off);
+            for (first = ts2_mf_first(lower); first >= 0 && first < g_ts2_mf_count &&
+                                              !strcmp(g_ts2_mf[first].lower, lower); first++)
+                if (!g_ts2_mf[first].pak[0])
+                    g_ts2_mf[first].ref_len = (int)len;
+        }
+    }
+    free(names);
+    free(dir);
+    fclose(f);
+}
+
+/* Two mods that supply the same name for the same pak with different
+ * contents: the earlier one wins. New textures take ids from a hash of the
+ * picture (ts2gltf, ts2kitbash), so for them this is a rare collision rather
+ * than a choice, and worth a line. */
+static void ts2_paks_collisions(void)
+{
+    int i, j;
+
+    for (i = 0; i < g_ts2_mf_count; i++) {
+        for (j = i + 1; j < g_ts2_mf_count && !strcmp(g_ts2_mf[j].lower, g_ts2_mf[i].lower); j++) {
+            const Ts2ModFile *a = &g_ts2_mf[i], *b = &g_ts2_mf[j];
+            int k, shown = 0, id;
+            if (a->mod == b->mod || (a->pak[0] && b->pak[0] && strcmp(a->pak, b->pak)))
+                continue;
+            for (k = i + 1; k < j && !shown; k++)   /* reported against an earlier one */
+                shown = g_ts2_mf[k].mod == a->mod && g_ts2_mf[k].mod != b->mod &&
+                        !strcmp(g_ts2_mf[k].pak, a->pak);
+            if (shown || (a->size == b->size && ts2_file_same(a->host, b->host, a->size)))
+                continue;
+            fprintf(stderr, "[TS2-MODS] %s: mod %d (%s) and mod %d (%s) both supply it for %s, "
+                    "and they differ; mod %d's is used\n", a->lower, a->mod, xbox_mods_dir(a->mod),
+                    b->mod, xbox_mods_dir(b->mod), a->pak[0] ? a->pak : b->pak[0] ? b->pak : "every pak",
+                    a->mod);
+            if (sscanf(a->lower, "textures/%d.xbt", &id) == 1 && id >= 8000 && id <= 9999)
+                fprintf(stderr, "[TS2-MODS]   texture %d is a new id picked by hash in both: "
+                        "rebuild one of the two mods to move it\n", id);
+        }
+    }
+}
+
+/* Index every mod's files/ and paks/, once. */
+static void ts2_paks_init(void)
+{
+    int m, mods;
+
+    if (g_ts2_paks_ready)
+        return;
+    g_ts2_paks_ready = 1;
+    if (!k_ts2_paks.table)
+        return;
+    mods = xbox_mods_count();
+    for (m = 0; m < mods; m++) {
+        int before = g_ts2_mf_count, in_files;
+        xbox_mods_walk(m, "paks", ts2_mf_walk_paks, &m);
+        in_files = g_ts2_mf_count;
+        xbox_mods_walk(m, "files", ts2_mf_walk_files, &m);
+        if (g_ts2_mf_count > before)
+            fprintf(stderr, "[TS2-MODS] mod %d (%s): %d files in paks/, %d in files/\n", m,
+                    xbox_mods_dir(m), in_files - before, g_ts2_mf_count - in_files);
+    }
+    if (!g_ts2_mf_count)
+        return;
+    qsort(g_ts2_mf, (size_t)g_ts2_mf_count, sizeof *g_ts2_mf, ts2_mf_order);
+    ts2_paks_reference();
+    ts2_paks_collisions();
+    fflush(stderr);
+}
+
+/* The mod file's bytes, up to n, into guest memory at dst. */
+static uint32_t ts2_mf_load(const Ts2ModFile *f, uint32_t dst, uint32_t n)
+{
+    FILE *fp = fopen(f->host, "rb");
+    size_t got = 0;
+
+    if (n > f->size)
+        n = f->size;
+    if (fp) {
+        got = fread(TS2_PTR8(dst), 1, n, fp);
+        fclose(fp);
+    }
+    if (got != n)
+        fprintf(stderr, "[TS2-MODS] %s: read %u of %u bytes\n", f->host, (unsigned)got, (unsigned)n);
+    return (uint32_t)got;
+}
+
+typedef struct Ts2DirEnt {
+    char     name[TS2_PAK_NAME];
+    uint32_t name_va, len, pos, packed;
+    int      file;               /* the mod file it serves, or -1 */
+} Ts2DirEnt;
+
+static int ts2_dirent_order(const void *pa, const void *pb)
+{
+    /* As the game's lookup compares (strncmp, so by unsigned bytes). */
+    return strcmp(((const Ts2DirEnt *)pa)->name, ((const Ts2DirEnt *)pb)->name);
+}
+
+/* "host0:data/arcade/l_101.pak" -> "arcade/l_101.pak", lower case. */
+static void ts2_pak_rel(const char *path, char *out, size_t n)
+{
+    char lower[160];
+
+    ts2_lower(lower, sizeof lower, path);
+    path = lower;
+    if (!strncmp(path, "host0:", 6))
+        path += 6;
+    while (*path == '/' || *path == '\\')
+        path++;
+    if (!strncmp(path, "data/", 5) || !strncmp(path, "data\\", 5))
+        path += 5;
+    snprintf(out, n, "%s", path);
+}
+
+/* The record's directory still holds what was written to it. */
+static int ts2_paks_intact(const Ts2PakRec *pr, uint32_t dir, uint32_t count, int p4)
+{
+    int k;
+
+    if (pr->dir != dir || pr->count != count)
+        return 0;
+    for (k = 0; k < pr->n; k++)
+        if (TS2_MEM32(pr->entry[k] + (p4 ? 0x30 : 8)) != pr->pos[k])
+            return 0;
+    return 1;
+}
+
+/* Puts the mods' files into record r's directory (r: a pak just mounted). */
+static void ts2_paks_patch(int r)
+{
+    const Ts2Paks *P = &k_ts2_paks;
+    uint32_t rec = P->table + 32u * (uint32_t)r;
+    uint32_t count = TS2_MEM32(rec + 0x0C), base = TS2_MEM32(rec + 0x10);
+    uint32_t p4dir = TS2_MEM32(rec + 0x14), p8dir = TS2_MEM32(rec + 0x18);
+    int p4 = p4dir != 0, resident = base != 0;
+    uint32_t dir = p4 ? p4dir : p8dir, esz = p4 ? 60u : 12u, target, k;
+    Ts2PakRec *pr = &g_ts2_recs[r];
+    Ts2DirEnt *ents;
+    unsigned char *seen;
+    char pak[160];
+    int n = 0, replaced = 0, added = 0, i;
+
+    if (!dir || count > 0x40000)
+        return;
+    if (pr->n && ts2_paks_intact(pr, dir, count, p4))
+        return;
+    ts2_pak_rel(TS2_PTR8(TS2_MEM32(rec + 0x1C)), pak, sizeof pak);
+    ents = (Ts2DirEnt *)malloc(((size_t)count + (size_t)g_ts2_mf_count) * sizeof *ents);
+    seen = (unsigned char *)calloc((size_t)g_ts2_mf_count + 1, 1);
+    if (!ents || !seen) {
+        free(ents);
+        free(seen);
+        return;
+    }
+    pr->n = 0;
+
+    for (k = 0; k < count; k++) {
+        uint32_t e = dir + k * esz;
+        Ts2DirEnt *d = &ents[n++];
+        char lower[TS2_PAK_NAME];
+        int first;
+        if (p4) {
+            memcpy(d->name, TS2_PTR8(e), TS2_PAK_NAME);
+            d->name[TS2_PAK_NAME - 1] = 0;
+            d->name_va = 0;
+            d->pos = TS2_MEM32(e + 0x30);
+            d->len = TS2_MEM32(e + 0x34);
+            d->packed = TS2_MEM32(e + 0x38);
+        } else {
+            d->name_va = TS2_MEM32(e);
+            snprintf(d->name, sizeof d->name, "%s", TS2_PTR8(d->name_va));
+            d->len = TS2_MEM32(e + 4);
+            d->pos = TS2_MEM32(e + 8);
+            d->packed = 0;
+        }
+        d->file = -1;
+        ts2_lower(lower, sizeof lower, d->name);
+        first = ts2_mf_first(lower);
+        if (first >= 0) {
+            seen[first] = 1;
+            d->file = ts2_mf_pick(first, pak, 1, d->len, 0);
+        }
+    }
+    /* Names the pak lacks. */
+    for (i = 0; i < g_ts2_mf_count; i++) {
+        int f;
+        if (seen[i] || (i && !strcmp(g_ts2_mf[i].lower, g_ts2_mf[i - 1].lower)))
+            continue;
+        f = ts2_mf_pick(i, pak, 0, 0, !p4 && !resident);
+        if (f < 0)
+            continue;
+        if (!p4 && !g_ts2_mf[f].guest_name)
+            g_ts2_mf[f].guest_name = ts2_guest_string(g_ts2_mf[f].name);
+        if (!p4 && !g_ts2_mf[f].guest_name)
+            continue;
+        memset(&ents[n], 0, sizeof ents[n]);
+        snprintf(ents[n].name, sizeof ents[n].name, "%s", g_ts2_mf[f].name);
+        ents[n].name_va = g_ts2_mf[f].guest_name;
+        ents[n].file = f;
+        n++;
+        added++;
+    }
+    /* What each served entry says: the mod file's length, no packing, and a
+     * position that is no offset in the pak (a pak read into memory: the
+     * file's copy in guest memory, as an offset from the pak's). */
+    for (i = 0; i < n; i++) {
+        Ts2ModFile *f;
+        if (ents[i].file < 0)
+            continue;
+        f = &g_ts2_mf[ents[i].file];
+        if (resident) {
+            if (!f->guest_data) {
+                f->guest_data = xbox_HeapAlloc(f->size ? f->size : 16, 16);
+                if (f->guest_data)
+                    ts2_mf_load(f, f->guest_data, f->size);
+            }
+            if (!f->guest_data || ((f->guest_data - base) & 0xF)) {
+                fprintf(stderr, "[TS2-MODS] data/%s: no room for %s in memory; left out\n",
+                        pak, f->name);
+                ents[i].file = -1;
+                if ((uint32_t)i >= count) {    /* an added one: dropped */
+                    ents[i--] = ents[--n];
+                    added--;
+                }
+                continue;
+            }
+            ents[i].pos = f->guest_data - base;
+        } else {
+            ents[i].pos = TS2_PAK_MOD_POS | ((uint32_t)ents[i].file << 4);
+        }
+        ents[i].len = f->size;
+        ents[i].packed = 0;
+        if ((uint32_t)i < count)
+            replaced++;
+    }
+
+    target = dir;
+    if (added) {
+        uint32_t bytes = (uint32_t)n * esz;
+        if (pr->buf_bytes < bytes) {
+            uint32_t buf = xbox_HeapAlloc(bytes + 64 * esz, 16);
+            if (!buf) {
+                fprintf(stderr, "[TS2-MODS] data/%s: no memory for %d added files\n", pak, added);
+                n = (int)count;
+                added = 0;
+            } else {
+                pr->buf = buf;
+                pr->buf_bytes = bytes + 64 * esz;
+            }
+        }
+        if (added) {
+            target = pr->buf;
+            if (!p4)
+                qsort(ents, (size_t)n, sizeof *ents, ts2_dirent_order);
+        }
+    }
+    for (i = 0; i < n; i++) {
+        uint32_t e = target + (uint32_t)i * esz;
+        if (target == dir && ents[i].file < 0)
+            continue;              /* unchanged */
+        if (p4) {
+            if (target != dir) {
+                memset(TS2_PTR8(e), 0, TS2_PAK_NAME);
+                memcpy(TS2_PTR8(e), ents[i].name, strlen(ents[i].name));
+            }
+            TS2_MEM32(e + 0x30) = ents[i].pos;
+            TS2_MEM32(e + 0x34) = ents[i].len;
+            TS2_MEM32(e + 0x38) = ents[i].packed;
+        } else {
+            TS2_MEM32(e) = ents[i].name_va;
+            TS2_MEM32(e + 4) = ents[i].len;
+            TS2_MEM32(e + 8) = ents[i].pos;
+        }
+        if (ents[i].file >= 0) {
+            if (pr->n == pr->cap) {
+                int cap = pr->cap ? pr->cap * 2 : 64;
+                uint32_t *ne = (uint32_t *)realloc(pr->entry, (size_t)cap * sizeof *ne);
+                uint32_t *np = ne ? (uint32_t *)realloc(pr->pos, (size_t)cap * sizeof *np) : NULL;
+                int *nf = np ? (int *)realloc(pr->file, (size_t)cap * sizeof *nf) : NULL;
+                if (ne) pr->entry = ne;
+                if (np) pr->pos = np;
+                if (!nf)
+                    break;
+                pr->file = nf;
+                pr->cap = cap;
+            }
+            pr->entry[pr->n] = e;
+            pr->file[pr->n] = ents[i].file;
+            pr->pos[pr->n] = ents[i].pos;
+            pr->n++;
+        }
+    }
+    if (target != dir) {
+        TS2_MEM32(rec + (p4 ? 0x14 : 0x18)) = target;
+        TS2_MEM32(rec + 0x0C) = (uint32_t)n;
+    }
+    pr->dir = target;
+    pr->count = TS2_MEM32(rec + 0x0C);
+    if (pr->n)
+        g_ts2_paks_live = 1;
+    if (replaced || added) {
+        static int verbose = -1;
+        if (verbose < 0)
+            verbose = getenv("RECOMP_TS2_MODS_TRACE") && atoi(getenv("RECOMP_TS2_MODS_TRACE"));
+        fprintf(stderr, "[TS2-MODS] data/%s: %d files from mods, %d of them added%s\n",
+                pak, replaced + added, added, verbose ? "" : " (RECOMP_TS2_MODS_TRACE=1 lists them)");
+        for (i = 0; verbose && i < pr->n; i++) {
+            const Ts2ModFile *f = &g_ts2_mf[pr->file[i]];
+            fprintf(stderr, "[TS2-MODS]   %s from mod %d (%s%s%s)\n", f->name, f->mod,
+                    f->pak[0] ? "paks/" : "files/", f->pak, f->pak[0] ? "/" : "");
+        }
+        fflush(stderr);
+    }
+    free(ents);
+    free(seen);
+}
+
+/* sub_00085DB0(path, read_into_memory, heap) mounts a pak and returns its
+ * record (the last one; a P4CK pak mounted again reuses its own record and
+ * still returns the last). Every record holding that path is looked at
+ * afterwards; one whose directory still holds what was written is left. */
+static void ts2_paks_mount(void (*mount)(void))
+{
+    const Ts2Paks *P = &k_ts2_paks;
+    char path[160];
+    uint32_t eax, count;
+    int r;
+
+    if (!g_ts2_paks_ready)
+        ts2_paks_init();
+    if (!g_ts2_mf_count || !P->table) {
+        mount();
+        return;
+    }
+    snprintf(path, sizeof path, "%s", TS2_PTR8(TS2_MEM32(g_esp + 4)));
+    mount();
+    eax = g_eax;
+    count = TS2_MEM32(P->count);
+    for (r = 0; r < (int)count && r < P->max && r < TS2_PAK_RECORDS; r++) {
+        uint32_t name = TS2_MEM32(P->table + 32u * (uint32_t)r + 0x1C);
+        if (name && !strcmp(TS2_PTR8(name), path))
+            ts2_paks_patch(r);
+    }
+    g_eax = eax;
+}
+
+/* The mod file a directory entry serves, or -1: the record the lookup
+ * named first, then the others. */
+static int ts2_paks_file_of(uint32_t entry)
+{
+    const Ts2Paks *P = &k_ts2_paks;
+    uint32_t count = TS2_MEM32(P->count), cur = TS2_MEM32(P->current);
+    int first = cur >= P->table ? (int)((cur - P->table) / 32u) : -1, pass, r, k;
+
+    for (pass = 0; pass < 2; pass++)
+        for (r = pass ? 0 : first; r >= 0 && r < (int)count && r < TS2_PAK_RECORDS; r++) {
+            const Ts2PakRec *pr = &g_ts2_recs[r];
+            for (k = 0; k < pr->n; k++)
+                if (pr->entry[k] == entry)
+                    return pr->file[k];
+            if (!pass)
+                break;
+        }
+    return -1;
+}
+
+/* The entry the game's lookups give a name: P4CK paks first, as every
+ * reader asks them. */
+static uint32_t ts2_paks_find(uint32_t name)
+{
+    const Ts2Paks *P = &k_ts2_paks;
+    uint32_t e;
+    int pass;
+
+    for (pass = 0; pass < 2; pass++) {
+        g_esp -= 4;
+        TS2_MEM32(g_esp) = name;
+        g_esp -= 4;
+        TS2_MEM32(g_esp) = 0;              /* return address: none */
+        (pass ? P->find_p8 : P->find_p4)();
+        g_esp += 4;                        /* the argument; the callee popped the return */
+        e = g_eax;
+        if (e)
+            return e;
+    }
+    return 0;
+}
+
+/* sub_000864B0(name, buffer, size) reads a file from the mounted paks: up
+ * to size bytes (all of size from a P4CK pak), the count read returned. A
+ * mod's file is read from the mod instead. */
+static void ts2_paks_read(void (*read)(void))
+{
+    uint32_t name, buf, size, e;
+    int f;
+
+    if (!g_ts2_paks_live || !TS2_MEM32(k_ts2_paks.count)) {
+        read();
+        return;
+    }
+    name = TS2_MEM32(g_esp + 4);
+    buf = TS2_MEM32(g_esp + 8);
+    size = TS2_MEM32(g_esp + 12);
+    e = ts2_paks_find(name);
+    f = e ? ts2_paks_file_of(e) : -1;
+    if (f < 0) {
+        read();
+        return;
+    }
+    g_eax = ts2_mf_load(&g_ts2_mf[f], buf, size);
+    g_esp += 4;                            /* ret */
+}
+
+/* sub_00086880(name, buffer, size) starts an overlapped read of a file in
+ * the mounted paks (size rounded up to 2048) and returns non-zero once it
+ * is under way; sub_00086970 polls it, and reports it done when no read is
+ * pending. A mod's file is read there and then. */
+static void ts2_paks_read_async(void (*start)(void))
+{
+    uint32_t name, buf, size, e;
+    int f;
+
+    if (!g_ts2_paks_live || !TS2_MEM32(k_ts2_paks.count)) {
+        start();
+        return;
+    }
+    name = TS2_MEM32(g_esp + 4);
+    buf = TS2_MEM32(g_esp + 8);
+    size = TS2_MEM32(g_esp + 12);
+    e = ts2_paks_find(name);
+    f = e ? ts2_paks_file_of(e) : -1;
+    if (f < 0) {
+        start();
+        return;
+    }
+    ts2_mf_load(&g_ts2_mf[f], buf, (size + 0x7FFu) & ~0x7FFu);
+    TS2_MEM32(k_ts2_paks.read_pending) = 0;
+    g_eax = 1;
+    g_esp += 4;                            /* ret */
 }
 
 /* ── TimeSplitters 2: where this release's functions are ─────── */

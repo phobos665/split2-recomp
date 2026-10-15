@@ -19,6 +19,7 @@ Estimates are working time; calendar time will be longer. They date from
 | Variable refresh rate | Toolkit | Borderless fullscreen (Alt+Enter), VRR presents on both renderers; launcher rows Fullscreen and Variable refresh rate (xboxrecomp #29) |
 | Frame interpolation | Both | `frame_interp = 2..4` (launcher row): 120+ frames a second shown while the game runs at 60. TS2 names its matrix registers (c60 projection, c64-c75 model-view and bones) in `src/recomp_manual.c`. See below |
 | macOS (Apple Silicon) | Both | The toolkit's port; here, `src/main.c` from the portable template, the CMake project and `scripts/build.py` (Ninja). PAL plays to Siberia at 60 fps in a scripted run (13 Oct 2026) |
+| Mods that stack | Both | `RECOMP_MODS=a:b:c` (toolkit) with loose files served from inside the paks at run time (TS2, PAL: `files/`, `paks/<pak>/`; `ts2_paks_*`), every mod's `ts2/characters.ini` merged, conflicts settled by order and logged. `tools/ts2mod.py loose/check`, and `ts2kitbash`'s output is a mod. See [modding.md](modding.md) |
 | System Link | Both | Windows only. The toolkit emulates the network card and hosts sessions over a LAN or the internet; TS2 needed one seed. See below and [multiplayer.md](multiplayer.md) |
 
 ### Frame interpolation leftovers
@@ -133,7 +134,8 @@ What makes it feasible:
 | --- | --- | --- |
 | A `mods/` folder read before the disc's `.pak` files | Toolkit | **Done:** `RECOMP_MODS` (xboxrecomp `feat/mods-overlay`; macOS checked, Windows not built yet) |
 | `.pak` unpack and repack (or `tspak`) | TS2 | **Done:** `tools/ts2pak.py`, all 68 paks round-trip byte for byte |
-| Write a character's files into every pak that holds them (see below) | TS2 | **Done:** `tools/ts2mod.py build`, checked in Siberia |
+| Write a character's files into every pak that holds them (see below) | TS2 | **Done:** `tools/ts2mod.py build`, checked in Siberia; and since 15 Oct 2026 at run time instead, from a mod's `files/` (a recolour of the Siberian guards' textures, as loose files, drew in Siberia) |
+| **Mods stack:** loose files inside the paks served at run time from every `RECOMP_MODS` folder, new names added to a pak's directory, every mod's `characters.ini` merged | TS2 (+ toolkit `xbox_mods_walk`) | **Done (PAL):** two `ts2kitbash` mods (two characters, one) and a texture mod together: all three characters on Select Character and playable, the recoloured guards in Siberia; each alone, and both orders; a mod's loose files on top of another's whole paks (scripted, macOS) |
 | `.xbt` to and from DDS/PNG | TS2 | **Done:** `tools/ts2xbt.py`, all 19,180 textures round-trip |
 | The whole `.xbr` format from the game's loader: geometry sections, piece-to-bone binding, the 2–3 matrix blend, materials, LODs | TS2 | **Done:** `tools/ts2xbr.py`, `docs/formats/xbr.md`; every character file on the disc rewrites byte for byte |
 | Blender add-on: import `.xbr` and the human skeleton, export back, triangle strips | TS2 | **Done as glTF:** `tools/ts2gltf.py` (`gltf` / `fromgltf`), round-tripped through Blender 5.2; all 314 `chr.pak` models regenerated through glTF drew and animated in an arcade match. The Blender add-on (`tools/blender/ts2_character`) wraps it in File > Import/Export; `graft` combines two characters' pieces, and new textures get ids from 8000 (`docs/formats/xbr.md`, Editing in Blender) |
