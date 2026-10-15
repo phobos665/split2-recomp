@@ -214,3 +214,8 @@ const Ts2UiPlace k_ts2_ui_places[] = {
     { 0x000CCBC0, TS2_UI_STRETCH }, { 0x000CCA8E, TS2_UI_STRETCH },
     { 0, TS2_UI_AUTO }
 };
+
+/* Extra characters from mods: the roster and its screens have not been
+ * found in this release yet, so a mod's characters.ini is reported and left
+ * alone (roster 0). PAL's are in config/pal/overrides.inc. */
+const Ts2Roster k_ts2_roster = { 0 };

@@ -12,6 +12,9 @@ The source folder:
                                          textures/0267.xbt)
   paks/<pak under data>/<path in a pak>  replaces or adds a file in that one
                                          pak (paks/story/l_35_ST.pak/ob/chrs/chr200.xbr)
+  ts2/<file>                             copied as it is: the game reads these
+                                         itself (ts2/characters.ini declares an
+                                         added character; docs/formats/roster.md)
 
 A character model (.xbr) put into a pak brings the textures it names that
 the pak lacks: files/textures/NNNN.xbt from the mod (new textures, numbered
@@ -28,6 +31,7 @@ RECOMP_MODS expects, and mod.json saying what went where.
 import argparse
 import json
 import os
+import shutil
 import struct
 import sys
 
@@ -233,6 +237,14 @@ def cmd_build(args):
             f.write(rebuild(data, replace, add))
         report["paks"][rel] = {"replaced": sorted(replace), "added": sorted(add)}
         print("data/%s: %d replaced, %d added" % (rel, len(replace), len(add)))
+
+    own = walk_files(os.path.join(args.source, "ts2"))
+    for rel, full in sorted(own.items()):
+        dest = os.path.join(args.out, "ts2", *rel.split("/"))
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        shutil.copyfile(full, dest)
+        print("ts2/%s: copied" % rel)
+    report["ts2"] = sorted(own)
 
     report["unused"] = sorted(set(files) - used)
     for n, where in sorted(report["skipped"].items()):

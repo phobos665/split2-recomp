@@ -849,6 +849,375 @@ static void ts2_ui_leave(void)
         g_ts2_depth--;
 }
 
+/* ── TimeSplitters 2: extra playable characters, declared by mods ── */
+
+/*
+ * A mod adds a playable character by taking over a roster slot and a chr id
+ * that has files on the disc but nobody plays (docs/formats/roster.md, "What
+ * adding a character would take", route 1). It says so in
+ * <mod>/ts2/characters.ini, read once at start-up from the first folder in
+ * RECOMP_MODS that has one (xboxrecomp xbox_mods_find). Its model goes where
+ * that chr id's files are (ob/chrs/chrNN.xbr in chr.pak, ob/chrincs/chrNN.xbr
+ * in chrinc.pak), its portrait into the front end's pak, both through
+ * tools/ts2mod.py; this is the part the game's tables need:
+ *
+ *   [Agent Static]
+ *   slot = 126                ; roster entry 0-126 to take over
+ *   chr = 70                  ; chr id: its model, definition and files
+ *   name = Agent Static       ; in every language; name.fr = ... and so on
+ *   bio = Nobody knows ...    ; the Gallery's description; bio.fr = ... too
+ *   portrait = textures/misc/chrimage_agentstatic.xbt   ; a file in the paks
+ *   background = neo          ; the set's chrblank_<set>, shown while locked
+ *   unlock = start            ; start, never, or keep (the slot's own rule)
+ *   stats = 61                ; optional: Stamina/Agility/Accuracy of this chr id
+ *   sounds = 61               ; optional: this chr id's voice set
+ *
+ * Without such a file nothing below changes anything. All of it is data in
+ * the game's own tables, written once before the game's main() runs:
+ *
+ *   - the roster entry (slot * 0x20): chr id, portrait, background, unlock
+ *     kind (1 "always"); every screen that lists characters walks this table
+ *     and asks the unlock rule, so the entry appears in Arcade's Select
+ *     Character list, the bot list and the Gallery with no code change;
+ *   - the name: the definition (chr * 0x44) names its character by a text
+ *     id, and every place that shows a character's name (the select screen,
+ *     the Gallery, the bot list, the scoreboard) looks that id up in the
+ *     language's string table; that id's entry in each of the five tables
+ *     is pointed at the new name, in guest memory; the Gallery's description
+ *     is text bio_base + chr id, and is repointed the same way;
+ *   - the portrait: the roster names it by an index into the texture list,
+ *     whose entry holds a path ("host0:textures/misc/chrimage_ped3.raw" for
+ *     the .xbt of that name in a pak). The entry's path is pointed at the new
+ *     file's name, so the old portrait stays on the disc, untouched;
+ *   - optionally the stats (+0x2C class, +0x30-0x38 per difficulty, +0x3C
+ *     agility) and the sound set (+0x04) copied from another character.
+ *
+ * The Gallery (Options > Player Options > View Gallery) shows the roster as
+ * one 14 x 9 grid, which 126 characters fill; a 127th would start a tenth
+ * row below the panel. ts2_gallery_build widens it to 15 columns and
+ * ts2_gallery_draw draws its cells smaller to match (below).
+ */
+typedef struct Ts2Roster {
+    uint32_t roster;          /* 0x20-byte entries: chr id, portrait, background, unlock[5] */
+    int      roster_count;
+    uint32_t defs;            /* 0x44-byte character definitions, by chr id */
+    int      def_count;
+    uint32_t textures;        /* 0x10-byte texture list entries; +0 is the path */
+    int      texture_count;
+    int      blank_first;     /* chrblank_<set> textures, in the texture list */
+    int      blank_count;
+    uint32_t strings;         /* one string table per language */
+    int      languages;
+    int      string_count;
+    uint32_t gallery_columns; /* the Gallery grid's column and row counts */
+    uint32_t gallery_rows;
+    uint32_t gallery_scale;   /* the float the Gallery scales its cells by */
+    int      bio_base;        /* text id of chr id 0's Gallery description */
+} Ts2Roster;
+
+/* Each release's, in its config/<region>/overrides.inc; roster 0 means not
+ * found in that release yet. */
+extern const Ts2Roster k_ts2_roster;
+
+/* xboxrecomp src/kernel: kernel_path.c, xbox_memory_layout.c */
+extern int      xbox_mods_find(const char *rel, char *out, size_t n);
+extern uint32_t xbox_HeapAlloc(uint32_t size, uint32_t alignment);
+
+#define TS2_MEM16(a) (*(volatile int16_t *)((uintptr_t)(uint32_t)(a) + g_xbox_mem_offset))
+#define TS2_PTR8(a)  ((char *)((uintptr_t)(uint32_t)(a) + g_xbox_mem_offset))
+
+enum { TS2_CHR_MAX = 8, TS2_LANGS = 5 };
+
+typedef struct Ts2Char {
+    char title[64];
+    int  slot, chr, stats_from, sounds_from, unlock;  /* unlock: -1 keep, else kind */
+    char name[TS2_LANGS][64];                         /* Latin-1; "" = name[0] */
+    char bio[TS2_LANGS][400];
+    char portrait[128];
+    char background[32];
+} Ts2Char;
+
+static Ts2Char g_ts2_chars[TS2_CHR_MAX];
+static int     g_ts2_char_count;
+static int     g_ts2_gallery_cols;     /* 0: the game's own grid */
+static int     g_ts2_gallery_base;     /* the game's own column count */
+
+static char *ts2_trim(char *s)
+{
+    char *e;
+
+    while (*s == ' ' || *s == '\t')
+        s++;
+    e = s + strlen(s);
+    while (e > s && (e[-1] == ' ' || e[-1] == '\t' || e[-1] == '\r' || e[-1] == '\n'))
+        *--e = 0;
+    return s;
+}
+
+/* The game's strings are Latin-1 (e.g. "Pr\xe4zision"); the file is UTF-8. */
+static void ts2_to_latin1(char *out, size_t n, const char *in)
+{
+    size_t o = 0;
+    const unsigned char *s = (const unsigned char *)in;
+
+    while (*s && o + 1 < n) {
+        unsigned c = *s++;
+        if (c >= 0xC0 && c < 0xE0 && (*s & 0xC0) == 0x80) {
+            c = ((c & 0x1F) << 6) | (*s++ & 0x3F);
+            if (c > 0xFF)
+                c = '?';
+        } else if (c >= 0x80) {
+            while ((*s & 0xC0) == 0x80)
+                s++;
+            c = '?';
+        }
+        out[o++] = (char)c;
+    }
+    out[o] = 0;
+}
+
+static void ts2_chars_read(const char *path)
+{
+    static const char *const langs[TS2_LANGS] = { "en", "fr", "de", "it", "es" };
+    FILE *f = fopen(path, "r");
+    char line[512];
+    Ts2Char *c = NULL;
+
+    if (!f) {
+        fprintf(stderr, "[TS2-CHR] cannot read %s\n", path);
+        return;
+    }
+    while (fgets(line, sizeof line, f)) {
+        char *s = ts2_trim(line), *eq, *key, *val, *semi;
+
+        if (!*s || *s == ';' || *s == '#')
+            continue;
+        if (*s == '[') {
+            if (g_ts2_char_count == TS2_CHR_MAX) {
+                fprintf(stderr, "[TS2-CHR] more than %d characters; the rest are ignored\n",
+                        TS2_CHR_MAX);
+                c = NULL;
+                continue;
+            }
+            c = &g_ts2_chars[g_ts2_char_count++];
+            memset(c, 0, sizeof *c);
+            c->slot = c->chr = c->stats_from = c->sounds_from = -1;
+            c->unlock = 1;
+            snprintf(c->title, sizeof c->title, "%s", ts2_trim(s + 1));
+            if (strchr(c->title, ']'))
+                *strchr(c->title, ']') = 0;
+            continue;
+        }
+        eq = strchr(s, '=');
+        if (!c || !eq)
+            continue;
+        *eq = 0;
+        key = ts2_trim(s);
+        val = eq + 1;
+        semi = strchr(val, ';');       /* a comment after the value */
+        if (semi)
+            *semi = 0;
+        val = ts2_trim(val);
+        if (!strcmp(key, "slot"))            c->slot = atoi(val);
+        else if (!strcmp(key, "chr"))        c->chr = atoi(val);
+        else if (!strcmp(key, "stats"))      c->stats_from = atoi(val);
+        else if (!strcmp(key, "sounds"))     c->sounds_from = atoi(val);
+        else if (!strcmp(key, "portrait"))   snprintf(c->portrait, sizeof c->portrait, "%s", val);
+        else if (!strcmp(key, "background")) snprintf(c->background, sizeof c->background, "%s", val);
+        else if (!strcmp(key, "unlock"))
+            c->unlock = !strcmp(val, "never") ? 0 : !strcmp(val, "keep") ? -1 : 1;
+        else if (!strncmp(key, "name", 4) || !strncmp(key, "bio", 3)) {
+            int bio = key[0] == 'b', n = bio ? 3 : 4, l;
+            for (l = 0; l < TS2_LANGS; l++)
+                if (key[n] == 0 ? l == 0 : (key[n] == '.' && !strcmp(key + n + 1, langs[l])))
+                    break;
+            if (l < TS2_LANGS && bio)
+                ts2_to_latin1(c->bio[l], sizeof c->bio[l] - 1, val);
+            else if (l < TS2_LANGS)
+                ts2_to_latin1(c->name[l], sizeof c->name[l], val);
+        }
+    }
+    fclose(f);
+}
+
+/* A copy of s in guest memory, which the game keeps a pointer to. */
+static uint32_t ts2_guest_string(const char *s)
+{
+    uint32_t va = xbox_HeapAlloc((uint32_t)strlen(s) + 1, 4);
+
+    if (va)
+        memcpy(TS2_PTR8(va), s, strlen(s) + 1);
+    return va;
+}
+
+/* Text id `text` in every language's table, pointed at a copy of the
+ * language's own string, else the first one's. */
+static void ts2_set_text(const Ts2Roster *r, int text, char (*str)[400], char (*name)[64])
+{
+    int l;
+
+    if (text <= 0 || text >= r->string_count)
+        return;
+    for (l = 0; l < r->languages && l < TS2_LANGS; l++) {
+        const char *v = str ? (str[l][0] ? str[l] : str[0]) : (name[l][0] ? name[l] : name[0]);
+        uint32_t table = TS2_MEM32(r->strings + 4u * (uint32_t)l);
+        uint32_t s = ts2_guest_string(v);
+        if (table && s)
+            TS2_MEM32(table + 4u * (uint32_t)text) = s;
+    }
+}
+
+static void ts2_char_apply(const Ts2Roster *r, const Ts2Char *c)
+{
+    uint32_t entry = r->roster + (uint32_t)c->slot * 0x20;
+    uint32_t def = r->defs + (uint32_t)c->chr * 0x44;
+    int text = TS2_MEM16(def);
+
+    TS2_MEM32(entry) = (uint32_t)c->chr;
+    if (c->unlock >= 0)
+        TS2_MEM32(entry + 0x0C) = (uint32_t)c->unlock;
+
+    /* The name, by its text id. Another definition naming the same id would
+     * be renamed too; none of the unplayed ids shares one (roster.md). */
+    if (c->name[0][0])
+        ts2_set_text(r, text, NULL, (char (*)[64])c->name);
+    /* The Gallery's description ends in a line break, as the game's do. */
+    if (c->bio[0][0] && r->bio_base) {
+        Ts2Char tmp = *c;
+        int l;
+        for (l = 0; l < TS2_LANGS; l++)
+            if (tmp.bio[l][0] && tmp.bio[l][strlen(tmp.bio[l]) - 1] != '\n')
+                strcat(tmp.bio[l], "\n");
+        ts2_set_text(r, r->bio_base + c->chr, tmp.bio, NULL);
+    }
+
+    /* The portrait: the slot's texture list entry now names the mod's file.
+     * The list's paths are "host0:<path in the pak, ending .raw>" and the
+     * game finds the .xbt of that name. */
+    if (c->portrait[0]) {
+        int tex = (int)TS2_MEM32(entry + 4);
+        char path[160];
+        char *dot;
+
+        snprintf(path, sizeof path, "host0:%s", c->portrait);
+        dot = strrchr(path, '.');
+        if (dot && strchr(dot, '/') == NULL)
+            strcpy(dot, ".raw");
+        else
+            strncat(path, ".raw", sizeof path - strlen(path) - 1);
+        if (tex >= 0 && tex < r->texture_count)
+            TS2_MEM32(r->textures + (uint32_t)tex * 0x10) = ts2_guest_string(path);
+    }
+
+    /* The set background shown while locked: chrblank_<set>.raw. */
+    if (c->background[0]) {
+        char want[48];
+        int t;
+
+        snprintf(want, sizeof want, "chrblank_%s.raw", c->background);
+        for (t = r->blank_first; t < r->blank_first + r->blank_count; t++) {
+            const char *p = TS2_PTR8(TS2_MEM32(r->textures + (uint32_t)t * 0x10));
+            const char *slash = strrchr(p, '/');
+            if (slash && !strcmp(slash + 1, want)) {
+                TS2_MEM32(entry + 8) = (uint32_t)t;
+                break;
+            }
+        }
+    }
+
+    if (c->stats_from >= 0 && c->stats_from < r->def_count) {
+        uint32_t from = r->defs + (uint32_t)c->stats_from * 0x44;
+        uint32_t o;
+        for (o = 0x2C; o <= 0x3C; o += 4)
+            TS2_MEM32(def + o) = TS2_MEM32(from + o);
+    }
+    if (c->sounds_from >= 0 && c->sounds_from < r->def_count)
+        TS2_MEM32(def + 4) = TS2_MEM32(r->defs + (uint32_t)c->sounds_from * 0x44 + 4);
+
+    fprintf(stderr, "[TS2-CHR] %s: roster slot %d = chr id %d (chr%02d.xbr), name text %d "
+            "\"%s\", portrait %d \"%s\", background %u, unlock kind %u\n",
+            c->title, c->slot, c->chr, c->chr + 1, text, c->name[0],
+            (int)TS2_MEM32(entry + 4), c->portrait[0] ? c->portrait : "(the slot's own)",
+            (unsigned)TS2_MEM32(entry + 8), (unsigned)TS2_MEM32(entry + 0x0C));
+}
+
+/* The game's main(argc, argv): the tables are patched before it reads them. */
+static void ts2_chars_main(void (*main_fn)(void))
+{
+    const Ts2Roster *r = &k_ts2_roster;
+    char path[1024];
+    int i, mod = xbox_mods_find("ts2/characters.ini", path, sizeof path);
+
+    if (mod >= 0) {
+        if (!r->roster) {
+            fprintf(stderr, "[TS2-CHR] %s: the roster has not been found in this "
+                    "release; no characters added\n", path);
+        } else {
+            fprintf(stderr, "[TS2-CHR] characters from %s (mod %d)\n", path, mod);
+            ts2_chars_read(path);
+            for (i = 0; i < g_ts2_char_count; i++) {
+                const Ts2Char *c = &g_ts2_chars[i];
+                if (c->slot < 0 || c->slot >= r->roster_count ||
+                    c->chr < 0 || c->chr >= r->def_count) {
+                    fprintf(stderr, "[TS2-CHR] %s: needs slot 0-%d and chr 0-%d; skipped\n",
+                            c->title, r->roster_count - 1, r->def_count - 1);
+                    continue;
+                }
+                ts2_char_apply(r, c);
+            }
+        }
+        fflush(stderr);
+    }
+    main_fn();
+}
+
+/* The Gallery's grid: the build sets 14 columns and 9 rows after the fact.
+ * With more shown entries (unlock kind not 0) than cells, it gets as many
+ * columns as 9 rows need; the cursor code already copes with a part-filled
+ * last row (it wraps by rows * columns - count). */
+static void ts2_gallery_build(void (*build)(void))
+{
+    const Ts2Roster *r = &k_ts2_roster;
+    uint32_t cols, rows;
+    int i, shown = 0;
+
+    build();
+    if (!g_ts2_char_count || !r->roster)
+        return;
+    for (i = 0; i < r->roster_count; i++)
+        if (TS2_MEM32(r->roster + (uint32_t)i * 0x20 + 0x0C))
+            shown++;
+    cols = TS2_MEM32(r->gallery_columns);
+    rows = TS2_MEM32(r->gallery_rows);
+    if (cols && rows && (uint32_t)shown > cols * rows) {
+        g_ts2_gallery_base = (int)cols;
+        g_ts2_gallery_cols = (int)((shown + rows - 1) / rows);
+        TS2_MEM32(r->gallery_columns) = (uint32_t)g_ts2_gallery_cols;
+    }
+}
+
+/* The cells are a fixed fraction (a float in .rdata, 0.45 of a portrait's
+ * size) of the portrait apart, so a fifteenth column runs past the panel's
+ * right edge. For the draw alone, that fraction is made 14/15 of itself
+ * (the game's columns over the new count):
+ * the grid keeps its width and every cell its place in it. Other code reads
+ * the same float, hence put back straight after. */
+static void ts2_gallery_draw(void (*draw)(void))
+{
+    const Ts2Roster *r = &k_ts2_roster;
+    float scale;
+
+    if (!g_ts2_gallery_cols || !r->gallery_scale ||
+        TS2_MEM32(r->gallery_columns) != (uint32_t)g_ts2_gallery_cols) {
+        draw();
+        return;
+    }
+    scale = TS2_MEMF(r->gallery_scale);
+    TS2_MEMF(r->gallery_scale) = scale * (float)g_ts2_gallery_base / (float)g_ts2_gallery_cols;
+    draw();
+    TS2_MEMF(r->gallery_scale) = scale;
+}
+
 /* ── TimeSplitters 2: where this release's functions are ─────── */
 
 /*

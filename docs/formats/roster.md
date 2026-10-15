@@ -15,9 +15,11 @@ Each claim is marked:
   (`.pipeline/disasm/asm/text.asm`) at the addresses given.
 - **inferred**: a reading that fits the data but that neither of the above proves.
 
-No run was made for this page. The one run-derived fact (level paks carry
-their own character copies, and chr.pak is not used in a story level) is the
+The sections up to "What adding a character would take" were written
+without a run; the one run-derived fact there (level paks carry their own
+character copies, and chr.pak is not used in a story level) is the
 coordinator's measurement, quoted in [Which pak a model comes from](#which-pak-a-model-comes-from).
+The sections from "Experiment" on come from scripted runs.
 
 ## Summary
 
@@ -524,14 +526,142 @@ Measured in scripted runs (frame dumps):
   names it showed (Big Tony, Ilsa Nadir, Cyberfairy) are the default names
   given to a new profile, not a character choice.
 
-Where a player picks the character they play as: a **Select Character**
-screen in Arcade Custom (a column of portraits on the left and the chosen
-character's rotating 3D preview from `chrinc.pak`, with Accuracy, Agility
-and Stamina bars). One scripted run reached it after the map and options
-screens and another went straight into the match, so when it appears is
-not settled. Its code has not been looked at; it is not the 14 x 9 grid.
+Where a player picks the character they play as is the **Select Character**
+screen, below; it is not the 14 x 9 grid.
 
 Menu path for scripted runs from a fresh save (PAL): the story script's first
 five steps (`start` x4, `a`) reach the main menu (Story, Arcade, Challenge,
 MapMaker, Options); then `down` x4 and `a` open Options, `a` Player Options,
 `down` x5 and `a` the Gallery; or `down`, `a`, `down`, `a` for Arcade Custom.
+
+## The Select Character screen (Arcade)
+
+Measured in scripted runs (15 Oct 2026), code read at the addresses given.
+
+- **When it appears:** after **GO!** on the match Options screen, every time.
+  The flow from Arcade Custom is difficulty, game type, map, Options
+  (rules, Weapon Set, Bot Set, the cursor starting on GO!), then Select
+  Character, then the match. GO!'s action is `sub_00090A10`: it sets every
+  player's select state (`0x0035CA84`, one byte per player) to 1 and opens
+  the screen record at `0x002BBE10` (a single-player challenge, mode 0x12,
+  can skip it). The screen lists the profile's last character first and
+  `a` confirms it at once, so a script pressing `a` every 4 s passes the
+  screen in under a second. Frame dumps 5 s apart then show it in one run and
+  not the next: that was the "sometimes". It is always there; dump more
+  often after GO!, or press `up` there (the list wraps to its last entry).
+- **Code:** `sub_000A2A10` builds the screen per player and moves on once
+  every player's state is 5 (chosen); per player it loads the preview
+  (`sub_000A0770` → `sub_0009E410`, `ob/chrincs/chr%02d.xbr`) and builds the
+  column through the record at `0x002BBDA8`, whose builder is
+  `sub_000A3D90`. That makes one header item (draw `sub_0008F550`: the name
+  from the definition's text id, the Accuracy/Agility/Stamina bars) and calls
+  `sub_000A3C60`, which adds **one item per roster entry whose unlock rule
+  passes** (`sub_001AEE50(chr id)`), in table order, each with the chr id at
+  item +0x18, draw `sub_0008FAE0` (finds the entry by chr id in the 127
+  entries, draws its portrait through `sub_000A9AE0(texture)`) and action
+  `0x000A2910`. In modes 6 and 7 the list is one fixed character.
+- So an entry turned on in the roster table appears here, in the bot list
+  (Options > Bot Set: `sub_0008DEE0` walks the roster the same way, "Available
+  Bots") and in the Gallery, with no code change.
+
+## Strings
+
+`0x003362F0` holds one pointer per language (English, French, German,
+Italian, Spanish; `[0x00386734]` is the current one), each to an array of
+2770 pointers to NUL-terminated Latin-1 strings (`Pr\xe4zision`). Code reads
+them as `[table + id * 4]` with the id baked into the instruction, so an id
+is renamed by repointing its entry in each table. Ids met here:
+
+| Id | Text |
+|---|---|
+| 67-222 | Character names, in chr id order (definition +0x00) |
+| 625 + chr id | The Gallery's description of that character, ending in `\n` (`sub_00099430` at `0x0009984B`); empty (`\n`) for the unplayed ids |
+| 246, 248 | "Select Character", "\x0b2 Select" (`\x0b` + digit is a button glyph) |
+| 245, 839, 840 | "Setup Bots", "Current Bot Set", "Available Bots" |
+| 390 | "Not available" (Gallery, locked entry) |
+| 479-481 | Stamina, Agility, Accuracy |
+
+Text 138 (chr id 70's name, "NeoTokyo male pedestrian 1") is read nowhere
+but through the definition: no instruction names it directly.
+
+## Portraits
+
+The roster's +4 indexes the texture list at `0x002BF7B8` (548 entries of
+0x10; the dword at +0 is a pointer to the path, +4 the loaded handle that
+`sub_000A9AE0` returns). The path is `host0:textures/misc/chrimage_<x>.raw`
+and the file read is `textures/misc/chrimage_<x>.xbt` in a mounted pak: a
+new name in the same form works (measured). The loader (`sub_000A9BE0` →
+`sub_0014A3F0`) keeps the path pointer, so a new path must stay in guest
+memory. The `chrimage_*` files are in `data/arcade/l_101.pak` (the front
+end), `l_102.pak` and `gun.pak`; a match ran to its end without the new
+file in `gun.pak`, but where `gun.pak`'s copies are shown was not traced.
+
+## The Gallery grid
+
+`sub_00099960` builds it and sets 14 columns and 9 rows last;
+`sub_00098F40` draws it: cell `i` at row `i / columns`, x =
+`rect.x + 5 + ((col + 1) * w + w / 2) * 0.45` with `w` the portrait's size
+and 0.45 the float at `0x00222534` (read by six other functions too), y the
+same with the row. It draws the first `n` entries, `n` = entries whose kind
+is not 0. The cursor (`sub_00099430`) moves by the column count and wraps
+by `rows * columns - n`, so a part-filled last row works. 127 entries in 15
+columns at 14/15 of the spacing fill 8 rows and 7 cells of a ninth, in the
+panel's old width (measured).
+
+## Adding a character (mods)
+
+What split2-recomp does, PAL only (`src/recomp_manual.c`, "extra playable
+characters"; addresses in `config/pal/overrides.inc`). A mod folder for
+`RECOMP_MODS` holds:
+
+| File | What |
+|---|---|
+| `data/chr.pak` | `ob/chrs/chr{id+1:02d}.xbr` replaced, and any new `textures/NNNN.xbt` it uses |
+| `data/chrinc.pak` | `ob/chrincs/chr{id+1:02d}.xbr`, the select screen's preview, textures inside |
+| `data/arcade/l_101.pak` | the portrait, `textures/misc/chrimage_<name>.xbt` (64x64 DXT3, as `chrimage_ped3.xbt`) |
+| `ts2/characters.ini` | the declaration, below |
+
+`tools/ts2mod.py build` makes the paks from a `paks/<pak>/<path>` source
+tree and copies `ts2/` across. Only the first `RECOMP_MODS` folder with a
+`ts2/characters.ini` is read (xboxrecomp `xbox_mods_find`).
+
+```ini
+[Agent Static]
+slot = 126                 ; roster entry 0-126 to take over
+chr = 70                   ; chr id: model, definition, files chr71
+name = Agent Static        ; every language; name.fr / .de / .it / .es override
+bio = ...                  ; the Gallery's description (text 625 + chr); bio.fr ...
+portrait = textures/misc/chrimage_agentstatic.xbt
+background = neo           ; chrblank_<set> while locked (atom ... west)
+unlock = start             ; start (kind 1), never (0), keep (the slot's rule)
+stats = 61                 ; optional: copy definition +0x2C-+0x3C from this chr id
+sounds = 61                ; optional: copy the sound set (+0x04)
+```
+
+Up to 8 sections. Before the game's `main` (`sub_000D99F0`) runs, each one
+writes the roster entry (chr id, kind, background), points its name's text
+id and its description's id at new strings in every language, points the
+slot's texture-list entry at the new portrait's path (so `chrimage_ped3.xbt`
+stays on the disc untouched), and copies the stats and sound set if asked.
+The Gallery hooks (`sub_00099960`, `sub_00098F40`) widen the grid when more
+entries are shown than 14 x 9 cells.
+
+Which chr id: one that no arcade level pak carries, or that level's copy
+wins over `chr.pak`'s. chr ids 70-72 (`chr71`-`chr73`, NeoTokyo
+pedestrians) are only in `chr.pak` and `data/story/l_38_ST.pak` (NeoTokyo
+story, where the pedestrians walk), and `ob/chrincs/chr71`-`73.xbr` only in
+`chrinc.pak` (`tools/ts2mod.py where`). Replacing them changes the
+NeoTokyo story's pedestrians only if `l_38_ST.pak` is replaced too.
+
+Checked in scripted runs (macOS, 15 Oct 2026): the name, portrait, stats
+and the `chrinc` preview on Select Character; the model in an arcade match
+and on the death camera; a section's name in "Killed by ..." and "First
+kill: ..."; the Gallery at 15 columns with the description; three sections
+at once (slots 124-126); and, with no mod, the Gallery's own 14 x 9 grid.
+
+Tied to the one spare slot: the roster has 127 entries and 126 are in use,
+so a second character takes over a playable one. A roster that grows needs
+the table moved and the `0x7F` / `0xFE0` counts patched (see "What adding a
+character would take"); the declaration, the name, portrait and description
+patches and the Gallery's column count already work for any number of
+entries.

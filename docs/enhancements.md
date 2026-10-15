@@ -137,7 +137,8 @@ What makes it feasible:
 | Blender add-on: import `.xbr` and the human skeleton, export back, triangle strips | TS2 | **Done as glTF:** `tools/ts2gltf.py` (`gltf` / `fromgltf`), round-tripped through Blender 5.2; all 314 `chr.pak` models regenerated through glTF drew and animated in an arcade match. The Blender add-on (`tools/blender/ts2_character`) wraps it in File > Import/Export; `graft` combines two characters' pieces, and new textures get ids from 8000 (`docs/formats/xbr.md`, Editing in Blender) |
 | Low-detail models (`chrNNlod2.xbr`) and hat and head attachment points | TS2 | 3–5 days |
 | Checking in game: animation, hit detection, split screen | TS2 | ~5 days |
-| **To add characters:** grow the roster tables in the XBE (model paths, heads, hats, voices, unlocks, bot profiles), character select slots and portraits, unlocks in the save without breaking old saves | TS2 | 3–5 weeks |
+| **A character in the spare roster slot**, declared by a mod (`ts2/characters.ini`): name, portrait, description, unlock, stats and voice | TS2 | **Done (PAL):** Agent Static (chr id 70) on Select Character, in matches, in the bot list and the Gallery (15 columns); `docs/formats/roster.md`, "Adding a character (mods)" |
+| **To add characters beyond the spare slot:** grow the roster tables in the XBE (model paths, heads, hats, voices, unlocks, bot profiles), character select slots and portraits, unlocks in the save without breaking old saves | TS2 | 3–5 weeks |
 | **To add characters:** System Link refuses players whose mods differ | Toolkit | 2–3 days |
 
 First milestone (about 2.5 weeks): the first four steps, ending in a
@@ -182,9 +183,13 @@ stored per character, so a new character needs no save change. Two ways
 to add one:
 
 - Reuse one of the 35 non-playable ids (pedestrians, robots, spare
-  copies): give it new files and a roster entry. The roster count 127 is
-  hard-coded at 12 sites and the grid is full, so the grid and count change
-  too. The cheapest route; not tried yet.
+  copies): give it new files and a roster entry. **Done for one (15 Oct
+  2026):** roster entry 126 (Consultant, never shown) is the one spare slot;
+  a mod's `ts2/characters.ini` turns it into a chr id with new files, and
+  hooks patch the name, portrait and Gallery grid at start-up. A second
+  character this way takes over a playable one's slot. The Select Character
+  screen is not the 14 x 9 grid: it lists every unlocked roster entry, so it
+  needed no change.
 - A new id beyond 162: every table is a fixed array with other data after
   it, so either the tables move or the 15 functions that read the roster
   are overridden.

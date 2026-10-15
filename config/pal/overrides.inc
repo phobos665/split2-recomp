@@ -92,6 +92,29 @@ void sub_001AD1D0(void) { ts2_ui_enter(); sub_001AD1D0_gen(); ts2_ui_leave(); }
 extern void sub_001B7520_gen(void);
 void sub_001B7520(void) { ts2_ui_enter(); sub_001B7520_gen(); ts2_ui_leave(); }
 
+/* Extra characters from mods (ts2_chars_main and the Gallery hooks in
+ * recomp_manual.c). main is sub_000D99F0(argc, argv), called from the CRT's
+ * start-up (sub_001CF35A); the tables are patched before it runs. The
+ * Gallery's grid is built by sub_00099960 (it sets 14 columns and 9 rows
+ * last) and drawn by sub_00098F40, whose cells are 0.45 (0x00222534) of a
+ * portrait apart. docs/formats/roster.md has the tables. */
+extern void sub_000D99F0_gen(void);
+void sub_000D99F0(void) { ts2_chars_main(sub_000D99F0_gen); }
+extern void sub_00099960_gen(void);
+void sub_00099960(void) { ts2_gallery_build(sub_00099960_gen); }
+extern void sub_00098F40_gen(void);
+void sub_00098F40(void) { ts2_gallery_draw(sub_00098F40_gen); }
+
+const Ts2Roster k_ts2_roster = {
+    0x002BAC60, 127,      /* roster */
+    0x002AA060, 162,      /* character definitions */
+    0x002BF7B8, 548,      /* texture list */
+    470, 12,              /* chrblank_atom .. chrblank_west */
+    0x003362F0, 5, 2770,  /* string tables: English, French, German, Italian, Spanish */
+    0x0035C80C, 0x0035F4A4, 0x00222534,  /* Gallery: columns, rows, cell scale */
+    625,                  /* Gallery descriptions: text 625 + chr id (sub_00099430) */
+};
+
 /* Where TimeSplitters 2 (PAL, this XBE) draws what. Sites are return
  * addresses in the game's UI code. Ends at site 0.
  *
