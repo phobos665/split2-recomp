@@ -49,7 +49,7 @@ read, so put everything in one source.
 | `ts2kitbash.py` | build whole characters from a recipe: model, preview, portrait, roster entry |
 | `ts2mod.py` | build a mod from a source folder |
 | `blender/ts2_character` | Blender add-on: File > Import/Export > TimeSplitters 2 character |
-| `blender/ts2_lowpoly.py` | build a low-poly character from boxes, on TS2's skeleton |
+| `blender/ts2_lowpoly.py` | build a low-poly (N64-era) character on TS2's skeleton from a spec |
 | `blender/ts2_portrait.py` | render a character-select portrait |
 
 One-time setup: unpack the character pak and the bind pose (the skeleton's
@@ -103,16 +103,21 @@ its meshes piece by piece, export over the same base, and give the recipe the
 finished file: `"model": "mine.xbr"` (with `"model_textures"`, the folder of
 any new textures) in place of `body`/`head`.
 
-**From scratch, low-poly.** `tools/blender/ts2_lowpoly.py` builds a character
-from boxes, one or more per bone, textured from a small atlas painted from a
-spec. It suits an N64-era look, for example a character recreated from
-screenshots of an older game:
+**From scratch, low-poly.** `tools/blender/ts2_lowpoly.py` builds an
+N64-era character from a spec, for example one recreated from screenshots of
+an older game. What reads as N64 rather than as blocks: few polygons but
+tapered, chamfered shapes, smooth shading and soft textures. So each part is
+a run of rings along a bone (each ring a rounded cross-section of its own
+width and depth), shaded smooth, with a texture cell wrapped round it (the
+part's front is the middle of the cell):
 
 1. Collect reference images; note the proportions (head, torso, limb
    thicknesses) and the colours of each part.
-2. Write a spec: atlas cells (a base colour, grain, and rectangles: a face is
-   a skin cell with hair, eyes, brows and a mouth as rectangles) and one box
-   per bone, `[width, depth]` at each end, with a cell per side. The script's
+2. Write a spec: atlas cells (a base colour, a top-to-bottom gradient, and
+   soft rectangles and ellipses: a face is a skin cell with hair, brows,
+   eyes, nose and mouth as shapes; give it `"span": 2` for a 128-pixel cell)
+   and parts (rings `[t, width, depth]` along a bone, `sides`, `round`, and
+   `"front": 2` on the head so the face gets most of its cell). The script's
    docstring has the format.
 3. Export any TS2 human as the base (it supplies the skeleton), build, look
    at the preview, adjust the spec, repeat:
@@ -126,8 +131,10 @@ screenshots of an older game:
        --texture-dir textures --textures ~/TS2Modding/chr
    ```
 
-   A 16-box character is 192 triangles and one 128x128 texture. The result
-   can be opened in Blender with the add-on and refined by hand.
+   A 16-part character with 8-sided parts is about 650 triangles and one
+   256x256 texture. Pure boxes (4 sides, flat colours, no blur) look like
+   Minecraft rather than N64. The result can be opened in Blender with the
+   add-on and refined by hand.
 4. Add it to a recipe with `"model": "mine.xbr"`.
 
 Then, for any of the three:
