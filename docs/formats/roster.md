@@ -524,8 +524,12 @@ Measured in scripted runs (frame dumps):
   names it showed (Big Tony, Ilsa Nadir, Cyberfairy) are the default names
   given to a new profile, not a character choice.
 
-Still open: where a player picks the character they play as. The profile's
-chr id at +0xD0 is the lead.
+Where a player picks the character they play as: a **Select Character**
+screen in Arcade Custom (a column of portraits on the left and the chosen
+character's rotating 3D preview from `chrinc.pak`, with Accuracy, Agility
+and Stamina bars). One scripted run reached it after the map and options
+screens and another went straight into the match, so when it appears is
+not settled. Its code has not been looked at; it is not the 14 x 9 grid.
 
 Menu path for scripted runs from a fresh save (PAL): the story script's first
 five steps (`start` x4, `a`) reach the main menu (Story, Arcade, Challenge,

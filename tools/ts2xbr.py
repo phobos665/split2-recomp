@@ -578,17 +578,27 @@ def cmd_skeleton(args):
 
 def read_bindpose(data):
     """Local bind transforms [(translation, quaternion xyzw)] from a bind pose
-    ANR1 file: bone count at +0x3C, then from +0x2C4 one 20-byte record per
-    bone: 3 floats and 4 offset-binary u16 ((v - 0x8000) / 0x7FFF)."""
+    ANR1 file: bone count at +0x3C, 32 bytes per bone from +0x60, a word,
+    then one record per bone from +0x64 + 32 * count. The word at +0x30
+    picks the record: 1 (human_19, railspider) 20 bytes, 3 floats and 4
+    offset-binary u16 ((v - 0x8000) / 0x7FFF); 0 (barrel, drillhed, nailhed,
+    sawarm) 28 bytes, 3 floats and 4 floats."""
     if data[:4] != b"ANR1":
         raise XbrError("not an ANR1 file")
     n = struct.unpack_from("<I", data, 0x3C)[0]
-    if 0x2C4 + 20 * n != len(data):
+    packed = struct.unpack_from("<I", data, 0x30)[0]
+    start = 0x64 + 32 * n
+    size = 20 if packed == 1 else 28
+    if packed not in (0, 1) or start + size * n != len(data):
         raise XbrError("bind pose: %d bones do not fill the file" % n)
     out = []
     for k in range(n):
-        t = struct.unpack_from("<3f", data, 0x2C4 + 20 * k)
-        q = tuple((v - 0x8000) / 0x7FFF for v in struct.unpack_from("<4H", data, 0x2C4 + 20 * k + 12))
+        o = start + size * k
+        t = struct.unpack_from("<3f", data, o)
+        if packed:
+            q = tuple((v - 0x8000) / 0x7FFF for v in struct.unpack_from("<4H", data, o + 12))
+        else:
+            q = struct.unpack_from("<4f", data, o + 12)
         out.append((t, q))
     return out
 

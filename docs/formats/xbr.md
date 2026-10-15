@@ -289,10 +289,14 @@ The `.xbr` file holds the hierarchy but no joint positions.
   `fe_anim.pak: anim/data/ts2/` (code). `sub_0012CDC0` turns the bind pose
   into one matrix per animation bone, with translations scaled by the model's
   `+0x28` (code).
-- **Bind pose file** (ANR1, measured on the six bind-pose files): bone count at
-  +0x3C, and from +0x2C4 one 20-byte record per bone: a parent-relative
-  translation (3 floats), then a rotation quaternion x, y, z, w as four `u16`
-  in offset binary, `(v − 0x8000) / 0x7FFF`. Every quaternion decodes to unit
+- **Bind pose file** (ANR1, measured on the six bind-pose files): bone count `n`
+  at +0x3C, 32 bytes per bone from +0x60, a word, then from `0x64 + 32n` one
+  record per bone: a parent-relative translation (3 floats), then a rotation
+  quaternion x, y, z, w. The word at +0x30 says how the quaternion is stored:
+  1 (`human_19_bindpose`, `railspiderbindpose`, both 19 bones, records from
+  +0x2C4) as four `u16` in offset binary, `(v − 0x8000) / 0x7FFF`, 20 bytes a
+  record; 0 (`barrelbindpose2_m0` 13 bones, `drillhed`, `nailhed`, `sawarm`)
+  as four floats, 28 bytes a record. Every quaternion decodes to unit
   length. Composed parent × child (rotate the child's translation by the
   parent's world rotation), with chr01's scale of 1.04, this puts the pelvis
   at y = 1.20, the neck at 1.66, the head at 1.74, the shoulders at ±0.22, the
@@ -438,6 +442,8 @@ python3 -I tools/ts2xbr.py rewrite  in.xbr out.xbr
 python3 -I tools/ts2xbr.py skeleton DIR...                    # group files by animation hierarchy
 python3 -I tools/ts2xbr.py joints   chr01.xbr human_19_bindpose.raw
 python3 -I tools/ts2xbr.py obj      chr01.xbr chr01.obj --textures <unpacked chr.pak>/textures
+python3 -I tools/ts2gltf.py gltf    chr01.xbr chr01.glb --textures <unpacked chr.pak> --bindpose <bind pose folder>
+python3 -I tools/ts2gltf.py fromgltf chr01.xbr edited.glb new.xbr   # see Editing in Blender
 ```
 
 `obj` writes one group per piece and section, in bind pose. It writes PNGs of
@@ -446,6 +452,120 @@ from the strip form instead of the face lists.
 
 Round trip (PAL): `chr.pak` 314 of 314, `chrinc.pak` 155 of 155. Every file
 parses, every byte is accounted for, and every rewrite is byte-identical.
+
+## Editing in Blender
+
+`tools/ts2gltf.py` converts a model to glTF 2.0 binary (`.glb`) and back.
+Blender (tested with 5.2) imports and exports `.glb` with its armature and
+skin. The converter itself needs only Python 3.
+
+```text
+# 1. unpack the character pak, the bind poses and (for the mod) nothing else
+python3 -I tools/ts2pak.py unpack game/data/chr.pak     work/chr
+python3 -I tools/ts2pak.py unpack game/data/fe_anim.pak work/fe_anim
+
+# 2. export: armature, meshes, textures as PNG
+python3 -I tools/ts2gltf.py gltf work/chr/ob/chrs/chr01.xbr chr01.glb \
+    --textures work/chr --bindpose work/fe_anim/anim/data/ts2
+
+# 3. edit chr01.glb in Blender (below), export it as chr01_edited.glb
+
+# 4. import: geometry from the .glb, everything else from the original
+python3 -I tools/ts2gltf.py fromgltf work/chr/ob/chrs/chr01.xbr chr01_edited.glb mod/files/ob/chrs/chr01.xbr
+
+# 5. put it in every pak that carries chr01 and run
+python3 -I tools/ts2mod.py build mod game/data modout
+RECOMP_MODS=modout ./split2_recomp
+```
+
+**What the `.glb` holds.** One joint per palette bone: the animation bones,
+named by animation index and body part (`b04_head`, `b10_l_upperarm`; the
+`-X` side is called right, which is the character's right in Blender; whether
+the game draws the model mirrored was not checked), and the mid-joint bones
+that type-2 pieces synthesise (`mid_r_upperarm_r_forearm`), placed at their
+child's joint as at bind time. `--bindpose` takes the folder of bind poses and
+uses the one with the model's bone count (human_19 for humans,
+barrelbindpose2 for `chr17`); without one, or for hats, joints sit at the
+centre of their vertices. One object per piece and section, named
+`pNNsS_name` (`p07s0_head`; section 1 is the second pass), one material
+slot per material, named `mN_tTTTT` after the material index and texture id,
+with the texture embedded. Triangles are the face lists, which is what the
+game draws. Every vertex is weighted 1.0 to the one bone it follows.
+Piece types, links, blend factors, record kinds and material flags are in
+the `extras` of the nodes and materials, for reading only.
+
+**In Blender.** File > Import > glTF 2.0, defaults. Edit the meshes in edit
+mode or weight paint them; keep the object names (a `.001` suffix is fine),
+the bone names and the material names; do not join objects (each object is
+one piece) and do not apply the armature. Delete an object to remove that
+piece's geometry. File > Export > glTF 2.0 with the defaults
+does it: format glTF Binary, every object (the importer's `Icosphere` bone
+shape is skipped by `fromgltf`), +Y Up, Mesh: UVs, Normals and Vertex Colors
+(the default "Material" setting keeps them), Apply Modifiers off, Armature
+and Skinning on. Animation can be turned off. Moving an object in object
+mode is fine: `fromgltf` places vertices where Blender shows them.
+
+**What `fromgltf` does.** It reads positions, normals, UVs, vertex colours,
+triangles and their material from the `.glb`, and everything else from the
+base `.xbr`. Objects map to pieces by name (`pNNsS`), joints to palette bones
+by name, slots to materials by the `mN` prefix. Vertices are put in model
+space by the skin at rest. Each vertex gets one bone: a rigid piece's own; in a
+skinned piece the strongest-weighted of the bones that piece can use (the
+c64, c68 and own bones of [Skinning](#skinning-how-a-piece-is-bound-to-its-matrices)),
+or the nearest of them when none is weighted. It prints how many vertices
+were snapped away from their strongest bone overall.
+
+A section whose triangles are the base's (positions and UVs within 1e-4,
+normals within 5 degrees, colours within 2) is copied from the base
+unchanged, so an untouched piece stays byte-identical, and an unedited model
+comes back as the original file. Every other section is rebuilt:
+
+- vertices are deduplicated (Blender splits and reorders them);
+- triangles are grouped by material, in the base's material order, and
+  turned into strips with plain strip winding: the first two vertices of
+  each strip carry the restart bit, and no vertex needs the winding-flip
+  bit, so the strip form and the face lists agree under either reading;
+- strips are packed into records of at most 72 vertices (the largest
+  record on the disc; long strips are cut at even offsets with two vertices
+  of overlap), padded to multiples of 4 by the writer;
+- each material run gets one face list, on its last record, generated from
+  its strips; the record kind is the base's for that material;
+- a hat's collision is rebuilt from the triangles: one group per record,
+  one polygon per triangle with its plane and projection axes (last the
+  normal's largest axis, the other two in cyclic order when that component
+  is positive, as on the disc), and no adjacency records, whose meaning is
+  unknown. Untouched hats keep theirs.
+
+Colours Blender writes without alpha get the base section's alpha (127 in
+every coloured vertex on the disc). `--regenerate` rebuilds every section.
+The output is parsed and rebuilt before it is written.
+
+**Limits.** One bone per vertex: smooth weights are snapped, so blend
+between bones with geometry (as the originals do with joint and mid-joint
+pieces), not with weights. New geometry must go in an existing piece and
+can only use that piece's bones. Materials and textures are the base's
+(a new texture is a new `.xbt` under an existing id: `tools/ts2xbt.py
+import`). `chrNNlod2.xbr` is a separate model with its own pieces: export,
+edit and import it too, or the character changes back at a distance. Level
+paks carry their own copies of the character, which `ts2mod` replaces.
+
+**Tests** (`tools/test_ts2gltf.py`, not run by any build). `roundtrip` over
+all 314 files of `chr.pak` and all 155 of `chrinc.pak`: export and import
+without an edit gives the original file byte for byte; with `--regenerate`
+every file parses, rebuilds identically, has strips and face lists that
+agree, records within the limit, every skinned vertex on an allowed bone,
+and exactly the original's triangles (piece, section, material, position, UV
+and bone of each corner, winding included): 344,756 triangles in `chr.pak`,
+in 562,770 stored vertices against the disc's 519,252. `blender` puts
+`chr01`, `chr19`, `chr01lod2`, `chr10_hat`, `chr17` and `chr128` through
+Blender's importer and exporter (5.2, defaults): the same triangles come
+back in both modes (to 1e-4), no vertex is snapped, and the default import
+gives the original files byte for byte. What Blender changes: it reorders
+vertices, joints and materials, splits a vertex here and there (under 1%)
+where it stores two face-corner normals that differ in the last bits,
+moves positions by about 1e-8 and normals by under 0.5 degrees, duplicates a
+material it uses both with and without vertex colours (`m0_t0775.001`), and
+drops the colour alpha on some meshes.
 
 ## Against the community references
 
