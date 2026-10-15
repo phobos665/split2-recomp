@@ -506,3 +506,28 @@ Either way, arcade is where a new character can appear without touching
 level paks: arcade levels mount chr.pak behind the level pak. A story level
 mounts only its own pak, so a character used in story needs its files added
 to that level's pak (code; coordinator's measurement for the story half).
+
+## Experiment: a 127th entry on the grid (15 Oct 2026, not kept)
+
+A hook on `sub_00099960` (PAL) wrote roster entry 126 to chr id 70 with kind
+1 before the function ran, and set the row count to 10 after it (the
+function's last stores are columns `0x35C80C` = 14 and rows `0x35F4A4` = 9).
+Measured in scripted runs (frame dumps):
+
+- `sub_00099960` belongs to the **Gallery** (Options > Player Options > View
+  Gallery), reached through a screen record at `0x2BCE48` (five words; it is
+  paired with `sub_00099FF0`). Nothing on the way into a 1-player Arcade
+  Custom match (difficulty, mode, map, options, Go) runs it.
+- With 10 rows the grid kept its cell size and the tenth row ran off the
+  bottom of the panel, so the cell size or the panel has to change too.
+- The "Player 1 < name >" selector in Player Options switches profiles. The
+  names it showed (Big Tony, Ilsa Nadir, Cyberfairy) are the default names
+  given to a new profile, not a character choice.
+
+Still open: where a player picks the character they play as. The profile's
+chr id at +0xD0 is the lead.
+
+Menu path for scripted runs from a fresh save (PAL): the story script's first
+five steps (`start` x4, `a`) reach the main menu (Story, Arcade, Challenge,
+MapMaker, Options); then `down` x4 and `a` open Options, `a` Player Options,
+`down` x5 and `a` the Gallery; or `down`, `a`, `down`, `a` for Arcade Custom.
