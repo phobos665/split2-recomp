@@ -131,8 +131,8 @@ What makes it feasible:
 | --- | --- | --- |
 | A `mods/` folder read before the disc's `.pak` files | Toolkit | **Done:** `RECOMP_MODS` (xboxrecomp `feat/mods-overlay`; macOS checked, Windows not built yet) |
 | `.pak` unpack and repack (or `tspak`) | TS2 | **Done:** `tools/ts2pak.py`, all 68 paks round-trip byte for byte |
-| Write a character's files into every pak that holds them (see below) | TS2 | 1 day |
-| `.xbt` to and from DDS/PNG | TS2 | 1–2 days |
+| Write a character's files into every pak that holds them (see below) | TS2 | **Done:** `tools/ts2mod.py build`, checked in Siberia |
+| `.xbt` to and from DDS/PNG | TS2 | **Done:** `tools/ts2xbt.py`, all 19,180 textures round-trip |
 | The whole `.xbr` format from the game's loader: geometry sections, piece-to-bone binding, the 2–3 matrix blend, materials, LODs | TS2 | 8–12 days |
 | Blender add-on: import `.xbr` and the human skeleton, export back, triangle strips | TS2 | 10–15 days |
 | Low-detail models (`chrNNlod2.xbr`) and hat and head attachment points | TS2 | 3–5 days |
