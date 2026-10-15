@@ -129,8 +129,9 @@ What makes it feasible:
 
 | Step | Where | Estimate |
 | --- | --- | --- |
-| A `mods/` folder read before the disc's `.pak` files | Toolkit | 1–2 days |
-| `.pak` unpack and repack (or `tspak`) | TS2 | 0.5–1 day |
+| A `mods/` folder read before the disc's `.pak` files | Toolkit | **Done:** `RECOMP_MODS` (xboxrecomp `feat/mods-overlay`; macOS checked, Windows not built yet) |
+| `.pak` unpack and repack (or `tspak`) | TS2 | **Done:** `tools/ts2pak.py`, all 68 paks round-trip byte for byte |
+| Write a character's files into every pak that holds them (see below) | TS2 | 1 day |
 | `.xbt` to and from DDS/PNG | TS2 | 1–2 days |
 | The whole `.xbr` format from the game's loader: geometry sections, piece-to-bone binding, the 2–3 matrix blend, materials, LODs | TS2 | 8–12 days |
 | Blender add-on: import `.xbr` and the human skeleton, export back, triangle strips | TS2 | 10–15 days |
@@ -145,8 +146,14 @@ risk before the Blender work.
 
 Known limits:
 
-- Story enemies are drawn with the same `chr.pak` models, so editing a
-  character changes it in story mode too. Only a new slot avoids that.
+- Story enemies are drawn with the same models, so editing a character
+  changes it in story mode too. Only a new slot avoids that.
+- A level does not draw its characters from `chr.pak`. Every story and
+  arcade level pak carries copies of the characters in it (byte-identical
+  to `chr.pak`'s, textures under the same global `textures/NNNN.xbt`
+  numbers; `chr01.xbr` is in 22 paks, one file is in 24), so a character
+  edit is written into each of them. Checked: red textures in `chr.pak`
+  alone changed nothing in Siberia; in `l_35_ST.pak` the guards drew red.
 - Cutscenes are in-engine but use their own models, skeletons and
   animations (`cs_l_*.pak`, e.g. `anim/data/cs/l_35/spacemarine.xbr` with
   `spacemarine_m0_bind.raw`), so edits do not show in them.
