@@ -158,6 +158,22 @@ Known limits:
   animations (`cs_l_*.pak`, e.g. `anim/data/cs/l_35/spacemarine.xbr` with
   `spacemarine_m0_bind.raw`), so edits do not show in them.
 
+The roster (`docs/formats/roster.md`, PAL): 127 entries of 0x20 bytes at
+`0x002BAC60` (chr id, portrait, unlock rule), shown as one 14 x 9 grid of
+126 cells; 162 character definitions at `0x002AA060`; which characters a
+level loads is a table in the XBE (`0x002CE928`), and a level's pak must
+hold their files. Unlocks are worked out from story and medal bits, not
+stored per character, so a new character needs no save change. Two ways
+to add one:
+
+- Reuse one of the 35 non-playable ids (pedestrians, robots, spare
+  copies): give it new files and a roster entry. The roster count 127 is
+  hard-coded at 12 sites and the grid is full, so the grid and count change
+  too. The cheapest route; not tried yet.
+- A new id beyond 162: every table is a fixed array with other data after
+  it, so either the tables move or the 15 functions that read the roster
+  are overridden.
+
 Afterwards:
 
 - [ ] **Cutscenes:** carry an edited character into the cutscene versions:
