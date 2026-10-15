@@ -108,7 +108,9 @@ zone and top turn speed still apply.
 ### Playable character models
 
 Edit the playable characters in Blender and put them back into the game,
-then add new ones to the roster. Estimated 15 October 2026. The format
+then add new ones to the roster. **How to do it: [modding.md](modding.md)**
+(editing, new characters from two existing ones, from Blender, or low-poly
+from boxes; adding them to the roster; keeping private ones out of git). Estimated 15 October 2026. The format
 research behind it is in
 `xboxrecomp/docs/technical/modding-models-textures.md`.
 

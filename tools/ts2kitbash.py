@@ -24,6 +24,9 @@ A recipe is JSON:
 
   - body and head name chr.pak models (ob/chrs/<name>.xbr); the head piece,
     its neck joint and bridges come from the head model (ts2gltf graft).
+    Or "model": a finished .xbr (relative to the recipe; made in Blender and
+    imported with ts2gltf fromgltf, or by tools/blender/ts2_lowpoly.py), with
+    "model_textures" the folder of its new NNNN.xbt (default textures/).
   - recolour maps a texture id the finished model uses to a new texture:
     hue/sat (0..1, replacing the texel's) with light (a multiplier on its
     lightness), or tint (a multiplier per channel). New textures get ids
@@ -133,12 +136,30 @@ def build_character(c, ctx):
     os.makedirs(work, exist_ok=True)
     texdir = ctx["textures"]
 
-    # The in-game model: graft, then point recoloured textures at new ids.
-    graft = os.path.join(work, "graft.xbr")
-    run([py, "-I", gltf, "graft", os.path.join(chr_, "ob", "chrs", c["body"] + ".xbr"),
-         os.path.join(chr_, "ob", "chrs", c["head"] + ".xbr"), graft, "--pieces", "head",
-         "--textures", chr_, "--bindpose", ctx["bindpose"]], quiet=True)
-    _, xbr = ts2xbr.load(graft)
+    # The in-game model: a finished .xbr (e.g. from Blender: ts2gltf fromgltf,
+    # or tools/blender/ts2_lowpoly.py), or a graft; then recoloured textures
+    # get new ids.
+    if "model" in c:
+        _, xbr = ts2xbr.load(os.path.join(ctx["recipe_dir"], c["model"]))
+        mtex = os.path.join(ctx["recipe_dir"], c.get("model_textures", "textures"))
+        for m in xbr["materials"]:
+            if os.path.exists(os.path.join(chr_, "textures", "%04d.xbt" % m["texture"])):
+                continue                     # one of the disc's
+            p = os.path.join(mtex, "%04d.xbt" % m["texture"])
+            if not os.path.exists(p):
+                raise SystemExit("%s: texture %04d is neither the disc's nor in %s" % (c["name"], m["texture"], mtex))
+            blob = open(p, "rb").read()
+            if ctx["new_textures"].setdefault(m["texture"], blob) != blob:
+                raise SystemExit("%s: texture id %04d is taken by another character" % (c["name"], m["texture"]))
+            with open(os.path.join(texdir, "%04d.xbt" % m["texture"]), "wb") as f:
+                f.write(blob)
+            ctx["put"]("paks/chr.pak/textures/%04d.xbt" % m["texture"], blob)
+    else:
+        graft = os.path.join(work, "graft.xbr")
+        run([py, "-I", gltf, "graft", os.path.join(chr_, "ob", "chrs", c["body"] + ".xbr"),
+             os.path.join(chr_, "ob", "chrs", c["head"] + ".xbr"), graft, "--pieces", "head",
+             "--textures", chr_, "--bindpose", ctx["bindpose"]], quiet=True)
+        _, xbr = ts2xbr.load(graft)
     used = {m["texture"] for m in xbr["materials"]}
     new_ids = {}
     for old, how in sorted(c.get("recolour", {}).items()):
@@ -190,8 +211,9 @@ def build_character(c, ctx):
     # shown is not traced).
     for pak in PORTRAIT_PAKS:
         ctx["put"]("paks/%s/textures/misc/chrimage_%s.xbt" % (pak, c["slot"]), portrait)
-    print("%s: %s (body %s, head %s), textures %s" % (c["name"], c["slot"], c["body"], c["head"],
-                                                     sorted(new_ids.values()) or "unchanged"))
+    print("%s: %s (%s), new textures %s" % (
+        c["name"], c["slot"], c["model"] if "model" in c else "body %s, head %s" % (c["body"], c["head"]),
+        sorted(new_ids.values()) or "none"))
 
 
 def ini_value(c, key, value):
@@ -258,11 +280,12 @@ def main():
     a = ap.parse_args()
 
     recipe = json.load(open(a.recipe))
+    ctx_recipe_dir = os.path.dirname(os.path.abspath(a.recipe))
     slots = [c["slot"] for c in recipe["characters"]]
     if len(set(slots)) != len(slots):
         raise SystemExit("two characters in one slot")
     ini = characters_ini(recipe)          # checked before anything is built
-    ctx = {"work": a.work, "out": a.out, "blender": a.blender,
+    ctx = {"work": a.work, "out": a.out, "blender": a.blender, "recipe_dir": ctx_recipe_dir,
            "chr": unpack(os.path.join(a.data, "chr.pak"), os.path.join(a.work, "chr"))}
     fe = unpack(os.path.join(a.data, "fe_anim.pak"), os.path.join(a.work, "fe_anim"))
     front = unpack(os.path.join(a.data, "arcade", "l_101.pak"), os.path.join(a.work, "l_101"))

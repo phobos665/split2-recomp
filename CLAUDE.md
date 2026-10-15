@@ -102,6 +102,7 @@ config/<region>/        one release's addresses (pal, us):
   overrides.inc         the functions recomp_manual.c wraps, by address, and its UI placement table
   xbe_patches.json      PAL only: changes to the XBE made before the lift (the roster grown)
 game/                   the disc, supplied by the user        (ignored)
+private/                local mod work that is not ours to publish (ignored; docs/modding.md)
 src/recomp/gen/         the lifted C, i.e. game code           (ignored)
 src/recomp/ts2_region.h which release was lifted, written by build.py (ignored)
 .pipeline/              disasm, func_id and recomp stage output: PAL's, and USA's in .pipeline/us (ignored)
