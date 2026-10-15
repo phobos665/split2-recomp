@@ -133,7 +133,7 @@ What makes it feasible:
 | `.pak` unpack and repack (or `tspak`) | TS2 | **Done:** `tools/ts2pak.py`, all 68 paks round-trip byte for byte |
 | Write a character's files into every pak that holds them (see below) | TS2 | **Done:** `tools/ts2mod.py build`, checked in Siberia |
 | `.xbt` to and from DDS/PNG | TS2 | **Done:** `tools/ts2xbt.py`, all 19,180 textures round-trip |
-| The whole `.xbr` format from the game's loader: geometry sections, piece-to-bone binding, the 2–3 matrix blend, materials, LODs | TS2 | 8–12 days |
+| The whole `.xbr` format from the game's loader: geometry sections, piece-to-bone binding, the 2–3 matrix blend, materials, LODs | TS2 | **Done:** `tools/ts2xbr.py`, `docs/formats/xbr.md`; every character file on the disc rewrites byte for byte |
 | Blender add-on: import `.xbr` and the human skeleton, export back, triangle strips | TS2 | 10–15 days |
 | Low-detail models (`chrNNlod2.xbr`) and hat and head attachment points | TS2 | 3–5 days |
 | Checking in game: animation, hit detection, split screen | TS2 | ~5 days |
@@ -142,7 +142,22 @@ What makes it feasible:
 
 First milestone (about 2.5 weeks): the first four steps, ending in a
 hand-edited `.xbr` that still loads and animates. It settles the format
-risk before the Blender work.
+risk before the Blender work. **Reached 15 October 2026:** every human
+model in `l_35_ST.pak` with its head piece scaled 5x, written by
+`ts2xbr`'s writer and installed with `ts2mod`, drew in Siberia with the
+big head and kept animating (scripted run, macOS, frame dumps).
+
+What the format work changed in the plan:
+
+- All 238 human models (155 characters, 83 lod2) share one 19-bone
+  skeleton; its joint positions are `fe_anim.pak`
+  `human_19_bindpose.raw`, scaled per model. Exceptions: the Barrel Robot
+  (13 bones), three story bosses, and one-bone hats and detachable parts.
+- No blend weights: a skinned vertex names one of three bones (its
+  piece's, the parent's or the child's), so a mesh weight-painted in
+  Blender is snapped to one bone per vertex on export.
+- `chrinc.pak` holds the character-select previews: the same model with
+  its textures inside the file.
 
 Known limits:
 
