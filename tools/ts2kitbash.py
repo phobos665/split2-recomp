@@ -27,7 +27,7 @@ A recipe is JSON:
   - recolour maps a texture id the finished model uses to a new texture:
     hue/sat (0..1, replacing the texel's) with light (a multiplier on its
     lightness), or tint (a multiplier per channel). New textures get ids
-    from 8000 up (the disc uses 0-5293).
+    in 8000-9999 from a hash of the picture (the disc uses 0-5293).
   - The preview (chrinc.pak) is the in-game model with its textures
     embedded, as 149 of the disc's 154 previews are.
   - The portrait (textures/misc/chrimage_<slot>.xbt in data/arcade/
@@ -52,6 +52,7 @@ import os
 import shutil
 import subprocess
 import sys
+import zlib
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, TOOLS)
@@ -59,7 +60,10 @@ import ts2pak  # noqa: E402
 import ts2xbr  # noqa: E402
 import ts2xbt  # noqa: E402
 
-FIRST_NEW_TEXTURE = 8000
+# New texture ids: 8000-9999 (the disc uses 0-5293), picked from a hash of the
+# picture as ts2gltf fromgltf does, so two mods' new textures rarely land on
+# the same id and a rebuild gives the same ids again.
+NEW_TEXTURE_FIRST, NEW_TEXTURE_LAST = 8000, 9999
 LANGS = ("fr", "de", "it", "es")
 SETS = ("atom", "aztec", "circus", "gangster", "neo", "notredame", "planetx", "robot",
         "siberia", "spacestation", "ts1", "west")
@@ -111,9 +115,19 @@ def run(cmd, quiet=False):
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL if quiet else None)
 
 
-def build_character(c, ctx, next_id):
-    """Writes one character's files under ctx['out']; returns the next free
-    texture id."""
+def allocate_texture(ctx, blob):
+    span = NEW_TEXTURE_LAST - NEW_TEXTURE_FIRST + 1
+    start = zlib.crc32(blob) % span
+    for k in range(span):
+        tid = NEW_TEXTURE_FIRST + (start + k) % span
+        if ctx["new_textures"].get(tid, blob) == blob:
+            ctx["new_textures"][tid] = blob
+            return tid
+    raise SystemExit("no free texture id left in %d-%d" % (NEW_TEXTURE_FIRST, NEW_TEXTURE_LAST))
+
+
+def build_character(c, ctx):
+    """Writes one character's files under ctx['out']."""
     py, gltf = sys.executable, os.path.join(TOOLS, "ts2gltf.py")
     chr_, work = ctx["chr"], os.path.join(ctx["work"], c["slot"])
     os.makedirs(work, exist_ok=True)
@@ -133,11 +147,11 @@ def build_character(c, ctx, next_id):
             raise SystemExit("%s: texture %d is not one the model uses (%s)"
                              % (c["name"], old, sorted(used)))
         blob = recolour_xbt(open(os.path.join(chr_, "textures", "%04d.xbt" % old), "rb").read(), how)
-        new_ids[old] = next_id
-        with open(os.path.join(texdir, "%04d.xbt" % next_id), "wb") as f:
+        tid = allocate_texture(ctx, blob)
+        new_ids[old] = tid
+        with open(os.path.join(texdir, "%04d.xbt" % tid), "wb") as f:
             f.write(blob)
-        ctx["put"]("paks/chr.pak/textures/%04d.xbt" % next_id, blob)
-        next_id += 1
+        ctx["put"]("paks/chr.pak/textures/%04d.xbt" % tid, blob)
     for m in xbr["materials"]:
         m["texture"] = new_ids.get(m["texture"], m["texture"])
     model = ts2xbr.build(xbr)
@@ -178,7 +192,6 @@ def build_character(c, ctx, next_id):
         ctx["put"]("paks/%s/textures/misc/chrimage_%s.xbt" % (pak, c["slot"]), portrait)
     print("%s: %s (body %s, head %s), textures %s" % (c["name"], c["slot"], c["body"], c["head"],
                                                      sorted(new_ids.values()) or "unchanged"))
-    return next_id
 
 
 def ini_value(c, key, value):
@@ -268,9 +281,9 @@ def main():
             f.write(blob)
     ctx["put"] = put
 
-    next_id = FIRST_NEW_TEXTURE
+    ctx["new_textures"] = {}
     for c in recipe["characters"]:
-        next_id = build_character(c, ctx, next_id)
+        build_character(c, ctx)
     with open(os.path.join(a.out, "characters.json"), "w") as f:
         json.dump(recipe, f, indent=1)
     os.makedirs(os.path.join(a.out, "ts2"), exist_ok=True)
