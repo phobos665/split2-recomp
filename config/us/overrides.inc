@@ -37,6 +37,11 @@ void sub_0009F180(void) { ts2_front_end_scene(sub_0009F180_gen); }
 extern void sub_001CC100_gen(void);
 void sub_001CC100(void) { ts2_present(sub_001CC100_gen); }
 
+/* Big heads (ts2_blend_joints) are not attached here yet: blend_joints is
+ * PAL 0x000119C0, called by animate (PAL 0x00016850) with return address
+ * 0x00018122, and nobody has found them in this XBE. Until then
+ * RECOMP_TS2_BIG_HEAD does nothing in this release. */
+
 /* reserve is sub_001C8E35 (PAL 0x001C9265): 52 callers, a switch on its
  * first argument (the primitive type), and it calls the flush. flush is
  * sub_001C98AF (PAL 0x001C9CDF): it draws through sub_001CC1D0, the game's

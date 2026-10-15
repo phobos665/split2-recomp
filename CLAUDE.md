@@ -27,6 +27,7 @@ planned enhancement. TS2's share of it:
 | Widescreen | Done: the in-game camera is widened where it is built (`ts2_camera_setup` in `src/recomp_manual.c`), and the front end and HUD are placed by call site (each release's `k_ts2_ui_places`, in `config/<region>/overrides.inc`). Every screen is laid out for 16:9 |
 | Frame rate above 60 | Done by presenting above it: the toolkit's frame interpolation (`frame_interp`) draws the in-between frames while logic stays at 60. TS2 names its matrix registers (c60 projection, c64-c75) at its first present (`ts2_present` in `src/recomp_manual.c`). Leftovers are in `docs/enhancements.md` |
 | Online play | TS2 has System Link (LAN) and no Xbox Live. Done on Windows: the toolkit emulates the network card and hosts sessions over a LAN or the internet, and TS2 needed one seed (`0x0009D530`, PAL). macOS waits on the toolkit's card; USA is untried. `docs/multiplayer.md` |
+| Big heads | Done (PAL): `RECOMP_TS2_BIG_HEAD=<factor>` / `ts2_big_head`, where the game's own big-head cheat scales a bone (`ts2_blend_joints` in `src/recomp_manual.c`); its launcher row comes from the toolkit's `recomp_title_option` (declared in `CMakeLists.txt`). USA not attached |
 | Mods | Assets are in `data/*.pak`. Naming dumped textures by pak entry is this repo's job; the dump and replace is the toolkit's |
 | Cutscene skip | In-engine cutscenes: find where they start and whether the game already has a skip |
 

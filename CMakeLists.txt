@@ -36,6 +36,19 @@ endif()
 
 add_subdirectory(${XBOXRECOMP_DIR} ${CMAKE_BINARY_DIR}/xboxrecomp)
 
+# TS2's own settings: kept in its settings file, with a row each on the
+# launcher's Game tab (a toolkit that predates title options has no
+# recomp_title_option, and then RECOMP_TS2_BIG_HEAD and a hand-written line
+# still work). What each does is in src/recomp_manual.c.
+if(COMMAND recomp_title_option)
+    recomp_title_option(ts2_big_head
+        ENV    RECOMP_TS2_BIG_HEAD
+        LABEL  "Big heads"
+        HELP   "Every character's head drawn bigger, in every mode. Only the picture changes: hits are judged as before."
+        VALUES 1 1.5 2 2.5 3 4
+        NAMES  Off 1.5x 2x 2.5x 3x 4x)
+endif()
+
 # CONFIGURE_DEPENDS so a re-lift that adds or removes a chunk is picked up
 # without a manual re-configure.
 file(GLOB RECOMP_GEN_SOURCES CONFIGURE_DEPENDS "src/recomp/gen/*.c")

@@ -25,6 +25,14 @@ void sub_0009F1C0(void) { ts2_front_end_scene(sub_0009F1C0_gen); }
 extern void sub_001CC530_gen(void);
 void sub_001CC530(void) { ts2_present(sub_001CC530_gen); }
 
+/* animate is sub_00016850(character), once a frame for each character
+ * (its cheat block, big head at 0x00017B5F, scales the head bone
+ * [character+0x70]+0x18); blend_joints is sub_000119C0, which animate calls
+ * from 0x0001811D, so with return address 0x00018122. compose_bones is
+ * sub_00011890. */
+extern void sub_000119C0_gen(void);
+void sub_000119C0(void) { ts2_blend_joints(sub_000119C0_gen, 0x00018122u); }
+
 /* reserve is sub_001C9265(primitive, format, ?, count) and flush is
  * sub_001C9CDF. A reservation that does not fit draws the batch itself, by
  * its own way: sub_001C967C calls the draw. */

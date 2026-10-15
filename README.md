@@ -123,6 +123,10 @@ over the file.
 The game runs its logic once a frame, so an uncapped frame rate makes it run
 fast. Use frame interpolation for smoother motion instead.
 
+Big heads: `ts2_big_head = 2.5` in the settings file (`RECOMP_TS2_BIG_HEAD=2.5`,
+or the launcher's Game tab) draws every character's head 2.5 times its size.
+1 is off. Only the picture changes; headshots are judged as before.
+
 To keep the front end at 4:3 between bars while the levels are 16:9, add
 `ts2_menus = 43` to the settings file (`RECOMP_TS2_MENUS=43`).
 

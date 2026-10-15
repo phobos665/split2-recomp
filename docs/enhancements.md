@@ -19,6 +19,7 @@ Estimates are working time; calendar time will be longer. They date from
 | Variable refresh rate | Toolkit | Borderless fullscreen (Alt+Enter), VRR presents on both renderers; launcher rows Fullscreen and Variable refresh rate (xboxrecomp #29) |
 | Frame interpolation | Both | `frame_interp = 2..4` (launcher row): 120+ frames a second shown while the game runs at 60. TS2 names its matrix registers (c60 projection, c64-c75 model-view and bones) in `src/recomp_manual.c`. See below |
 | macOS (Apple Silicon) | Both | The toolkit's port; here, `src/main.c` from the portable template, the CMake project and `scripts/build.py` (Ninja). PAL plays to Siberia at 60 fps in a scripted run (13 Oct 2026) |
+| Big heads | Both | `ts2_big_head = <factor>` (`RECOMP_TS2_BIG_HEAD`, launcher row Big heads on the Game tab): every human's head drawn that much bigger, in story, arcade and the front end. Done where the game's own big-head cheat scales a bone, with any factor, on the head bone (the cheat's is the neck); picture only, hits unchanged. Checked 15 Oct 2026 (PAL, macOS): Siberia's guard and arcade bots close up at 2.5, neck attached, first-person hands and guns untouched, frame interpolation at 2x matched 100% of 3D primitives, no unresolved indirect calls. USA not attached yet. The launcher row needs xboxrecomp's `recomp_title_option` (branch `feat/big-head`). See below |
 | System Link | Both | Windows only. The toolkit emulates the network card and hosts sessions over a LAN or the internet; TS2 needed one seed. See below and [multiplayer.md](multiplayer.md) |
 
 ### Frame interpolation leftovers
@@ -30,6 +31,15 @@ Estimates are working time; calendar time will be longer. They date from
   firing, guards animating (the bone matrices), the pause menu, a death.
 - Measurements and how it works:
   `xboxrecomp/docs/technical/frame-interpolation.md`.
+
+### Big heads leftovers
+
+- USA: blend_joints (PAL `0x000119C0`, called by animate from `0x0001811D`) not found
+  in the USA XBE yet, so the switch does nothing there.
+- Not looked at: a separate hat up close (it should follow the head bone, as the
+  cheat's does), the Barrel Robot and the bosses (left alone on purpose: not
+  the human skeleton), cutscenes up close, and a character select preview by eye
+  (the front end's models do reach the hook).
 
 ### System Link leftovers
 

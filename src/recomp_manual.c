@@ -849,6 +849,188 @@ static void ts2_ui_leave(void)
         g_ts2_depth--;
 }
 
+/* ── TimeSplitters 2: big heads ─────────────────────────────── */
+
+/*
+ * RECOMP_TS2_BIG_HEAD / ts2_big_head = <factor>: every human character's
+ * head drawn <factor> times its size (2.5 is a good one; 1, or nothing, is
+ * the game as it was; below 1 shrinks them).
+ *
+ * The game has this already, as a cheat: animate(character), once a frame
+ * for each character on screen (the front end's previews too), poses the
+ * skeleton's bones in their parents' space, then -- when cheat bit 2 is
+ * on -- multiplies one bone by a scale matrix of 2 (bit 4 is the small-head
+ * cheat, 0.5; bit 8 big hands), and only then builds the type-2 mid-joint
+ * bones from their neighbours (blend_joints, the call this wraps), composes
+ * every bone with its parent's (compose_bones). The cheat bit is tested nowhere else,
+ * so it changes the picture and nothing the game plays by: hits are still
+ * judged on the head the game had.
+ *
+ * This does the same, at the same moment, with any factor: in the wrap of
+ * blend_joints, when it is animate calling it. The bone is still
+ * parent-relative there, so scaling its basis (its first three rows; the
+ * matrices are row-vector, translation in the fourth) grows it about its
+ * own joint, and compose_bones carries the scale into the matrix its pieces
+ * are drawn with (c64-c75), which is what frame interpolation then blends.
+ * Anything placed on the head bone after that (a separate hat) should
+ * grow with it, as with the cheat; not seen up close yet.
+ *
+ * One difference: the cheat scales the bone its skeleton table names
+ * ([character+0x70]+0x18), which is bone 3, the neck, so the neck grows as
+ * much as the head and the head is lifted on it. This scales bone 4, the
+ * head, about the top of the neck: the neck keeps its size and the head
+ * stays on it (the joint pieces between them follow whichever bone each
+ * vertex names, and the vertices at the joint barely move).
+ *
+ * Only for a human skeleton: the model's rigid pieces, walked as the game
+ * walks them, must give the 19-bone hierarchy every human shares (pelvis 0,
+ * spine 1, chest 2, neck 3, head 4; xbr.md on feat/character-models). The
+ * Barrel Robot, the bosses, guns and props are left alone. And not when
+ * the character's +0x6C record says the cheat must not apply (the cheat
+ * tests the same word).
+ *
+ * The character, as animate reads it: +0x00 the model (its descriptor:
+ * +0 piece count, +4 bone count; the 0x9C-byte pieces just below it),
+ * +0x04 the bone matrices, 64 bytes each, +0x6C the record the cheat
+ * checks (+0xC must be 0). A piece: +0 type (0 rigid, 1-3 joints), +1
+ * bone, +3 first child, +4 next sibling.
+ */
+extern double recomp_config_float(const char *env_name, const char *key, double fallback);
+
+static float ts2_big_head_factor(void)
+{
+    static float factor = -1.0f;
+
+    if (factor < 0.0f) {
+        double f = recomp_config_float("RECOMP_TS2_BIG_HEAD", "ts2_big_head", 1.0);
+
+        if (!(f > 0.0))             /* 0, negative, not a number: off */
+            f = 1.0;
+        if (f < 0.1) f = 0.1;
+        if (f > 6.0) f = 6.0;
+        factor = (float)f;
+        if (factor != 1.0f)
+            fprintf(stderr, "[TS2] big heads: x%g (RECOMP_TS2_BIG_HEAD / ts2_big_head)\n",
+                    (double)factor);
+    }
+    return factor;
+}
+
+#define TS2_PIECE_SIZE 0x9C
+#define TS2_MEM8S(a) (*(volatile int8_t *)((uintptr_t)(uint32_t)(a) + g_xbox_mem_offset))
+#define TS2_MEM8(a)  (*(volatile uint8_t *)((uintptr_t)(uint32_t)(a) + g_xbox_mem_offset))
+
+/* The bone the head's pieces are drawn with, or -1 when the model is not a
+ * human. The rigid pieces met walking the tree depth first from piece 0,
+ * child before next sibling and never down through a type-3 piece (as
+ * compose_bones walks it), are the animation bones in order, and each one's
+ * parent is the nearest rigid piece above it. Done for each character each
+ * frame, rather than remembered by model address: a level load puts other
+ * models at the same addresses, and the walk is a few dozen bytes read. */
+static int ts2_human_head_bone(uint32_t model)
+{
+    static const int8_t k_human[19] = {
+        -1, 0, 1, 2, 3, 2, 5, 6, 7, 2, 9, 10, 11, 0, 13, 14, 0, 16, 17
+    };
+    struct { int piece, rigid_parent; } stack[128];
+    int depth = 0, rigid = 0, head = -1, count;
+    uint32_t pieces;
+
+    if (!model)
+        return -1;
+    count = (int)TS2_MEM32(model);
+    if (count < 19 || count > 127)
+        return -1;
+    pieces = model - (uint32_t)count * TS2_PIECE_SIZE;
+
+    stack[depth].piece = 0;
+    stack[depth].rigid_parent = -1;
+    depth++;
+    while (depth > 0) {
+        int p, parent;
+
+        depth--;
+        p = stack[depth].piece;
+        parent = stack[depth].rigid_parent;
+        /* A sibling chain is walked in place, its children pushed. */
+        while (p >= 0 && p < count) {
+            uint32_t piece = pieces + (uint32_t)p * TS2_PIECE_SIZE;
+            uint8_t type = TS2_MEM8(piece);
+            int8_t child = TS2_MEM8S(piece + 3);
+            int below = parent;
+
+            if (type == 0) {
+                if (rigid >= 19 || k_human[rigid] != parent)
+                    return -1;
+                if (rigid == 4)
+                    head = TS2_MEM8S(piece + 1);
+                below = rigid++;
+            }
+            if (child >= 0 && type != 3) {
+                if (depth >= (int)(sizeof stack / sizeof stack[0]) - 1)
+                    return -1;
+                /* The sibling waits while the child's subtree is walked. */
+                stack[depth].piece = TS2_MEM8S(piece + 4);
+                stack[depth].rigid_parent = parent;
+                depth++;
+                p = child;
+                parent = below;
+                continue;
+            }
+            p = TS2_MEM8S(piece + 4);
+        }
+    }
+    return rigid == 19 ? head : -1;
+}
+
+static void ts2_big_head(uint32_t character)
+{
+    float s = ts2_big_head_factor();
+    uint32_t model, record, m;
+    int bone, i;
+
+    if (s == 1.0f || !character)
+        return;
+    record = TS2_MEM32(character + 0x6C);
+    if (record && TS2_MEM32(record + 0x0C) != 0)
+        return;
+    model = TS2_MEM32(character);
+    bone = ts2_human_head_bone(model);
+    {
+        /* The first models seen, and whether the cheat's own head bone
+         * ([character+0x70]+0x18) agrees with the walk. */
+        static uint32_t seen[32];
+        static int seen_count;
+        uint32_t skel = TS2_MEM32(character + 0x70);
+        int k;
+
+        for (k = 0; k < seen_count && seen[k] != model; k++)
+            ;
+        if (k == seen_count && seen_count < 32) {
+            seen[seen_count++] = model;
+            fprintf(stderr, "[TS2] big heads: model 0x%08X, %u pieces, %u bones: %s%d "
+                    "(the cheat's head bone %d)\n", model, TS2_MEM32(model),
+                    TS2_MEM32(model + 4), bone >= 0 ? "human, head bone " : "not human ",
+                    bone, skel ? (int)TS2_MEM32(skel + 0x18) : -1);
+        }
+    }
+    if (bone < 0 || bone >= (int)TS2_MEM32(model + 4))
+        return;
+    m = TS2_MEM32(character + 4) + (uint32_t)bone * 64;
+    for (i = 0; i < 12; i++)                /* rows 0-2: the basis */
+        TS2_MEMF(m + 4 * i) *= s;
+}
+
+/* blend_joints(character, piece, bind) with the return address animate
+ * gives it (each release's overrides.inc says which); its other callers are
+ * itself and the model loader's bind pose. */
+static void ts2_blend_joints(void (*blend_joints)(void), uint32_t from_animate)
+{
+    if (TS2_MEM32(g_esp) == from_animate)
+        ts2_big_head(TS2_MEM32(g_esp + 4));
+    blend_joints();
+}
+
 /* ── TimeSplitters 2: where this release's functions are ─────── */
 
 /*
