@@ -52,23 +52,6 @@ def head_frame(arm):
     return head, chest
 
 
-def face_direction(meshes, head):
-    best, score = Vector((0, -1, 0)), -1.0
-    pts = []
-    for ob in meshes:
-        if "head" not in ob.name and "b04" not in ob.name:
-            continue
-        m = ob.matrix_world
-        pts += [m @ v.co for v in ob.data.vertices]
-    if not pts:
-        return best
-    for d in (Vector((0, -1, 0)), Vector((0, 1, 0)), Vector((1, 0, 0)), Vector((-1, 0, 0))):
-        reach = max((p - head).dot(d) for p in pts)
-        if reach > score:
-            best, score = d, reach
-    return best
-
-
 def main():
     a = args()
     bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -78,7 +61,9 @@ def main():
     bpy.context.view_layer.update()
 
     head, chest = head_frame(arm)
-    fwd = face_direction(meshes, head)
+    # TS2 characters face -Y (the exporter keeps the game's axes); guessing
+    # from the head's shape picked the back of a head with big hair.
+    fwd = Vector((0, -1, 0))
     up = Vector((0, 0, 1))
     neck_len = (head - chest).length or 0.3
     # Framed as the shipped portraits: the head fills the upper two thirds,

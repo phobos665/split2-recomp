@@ -38,7 +38,9 @@ The spec (JSON):
     down from the top; `soft` feathers the edge, in pixels). A shape can
     also be a picture: {"image": "face.png", "rect": [...], "crop": [x, y,
     w, h] (its pixels, optional), "mask": "ellipse" or "rect", "feather":
-    0.15}, the path relative to the spec, e.g. a face or a cloth texture
+    0.15, "key": [r, g, b], "key_tol": 0.06}, the path relative to the spec
+    (key makes texels near that colour transparent: a screenshot's
+    background round a cropped head), e.g. a face or a cloth texture
     taken from reference screenshots. And {"polygon": [[x, y], ...]} (convex,
     0..1 of the cell) for a V or a lapel. Then the atlas
     is blurred by `blur` pixels (the atlas's, or the cell's own).
@@ -53,8 +55,11 @@ The spec (JSON):
     forward). `sides` is the number of edges around (default 8), `round` the
     superellipse exponent of the cross-section (2 an ellipse, higher a
     rounder box; default 2.5). `front` (default 1) gives the front half of
-    the part that many times its share of the cell, as a face needs. The
-    ends are capped.
+    the part that many times its share of the cell. `front_cell` instead
+    maps the faces that look forward (normal . -Y above `front_dot`, default
+    0.4) straight on from the front onto a cell of their own, as N64 heads
+    carry a face photo: a face, undistorted (`front_aspect`, the picture's
+    width / height, keeps its shape). The ends are capped.
 """
 
 import argparse
@@ -159,6 +164,12 @@ def _image_block(shape, n, base_dir):
     u, v = (u + 0.5) / tw * 2 - 1, (v + 0.5) / th * 2 - 1
     r = np.sqrt(u * u + v * v) if shape.get("mask", "rect") == "ellipse" else np.maximum(abs(u), abs(v))
     a = np.clip((1 - r) / f, 0, 1)
+    if "key" in shape:
+        # Colour key: texels near `key` (a screenshot's background showing
+        # round a cropped head) go transparent, so the cell's paint shows.
+        tol = float(shape.get("key_tol", 0.06))
+        dist = np.sqrt(((pic - np.array(shape["key"], dtype=np.float32)) ** 2).sum(axis=2))
+        a = a * np.clip((dist - tol) / (tol * 0.5), 0, 1)
     rgb = np.zeros((n, n, 3), dtype=np.float32)
     alpha = np.zeros((n, n), dtype=np.float32)
     ya, yb, xa, xb = max(0, y0), min(n, y0 + th), max(0, x0), min(n, x0 + tw)
@@ -324,7 +335,39 @@ def build_part(bm, uv, part, arm, cells):
         if f.normal.dot(f.calc_center_median() - inside) < 0:
             f.normal_flip()
         f.smooth = True
+    if "front_cell" in part:
+        project_front(part, [f for f, _ in faces], uv, cells)
     return 2 * sides * (len(verts) - 1) + 2 * (sides - 2)
+
+
+def project_front(part, faces, uv, cells):
+    """The faces that look forward (normal . -Y above `front_dot`) take their
+    texture straight on from the front, from `front_cell`, as a face photo is
+    put on a head: x across, z up, over the box those faces span (or `fit`
+    them to the picture's aspect, `front_aspect` = width / height)."""
+    fwd = Vector((0, -1, 0))
+    chosen = [f for f in faces if f.normal.dot(fwd) > float(part.get("front_dot", 0.4))]
+    if not chosen:
+        return
+    xs = [l.vert.co.x for f in chosen for l in f.loops]
+    zs = [l.vert.co.z for f in chosen for l in f.loops]
+    x0, x1, z0, z1 = min(xs), max(xs), min(zs), max(zs)
+    aspect = part.get("front_aspect")
+    if aspect:
+        # Widen the span on the shorter side so the picture keeps its shape.
+        w, h = x1 - x0, z1 - z0
+        if w / h < aspect:
+            pad = (aspect * h - w) / 2
+            x0, x1 = x0 - pad, x1 + pad
+        else:
+            pad = (w / aspect - h) / 2
+            z0, z1 = z0 - pad, z1 + pad
+    u0, v0, u1, v1 = cells[part["front_cell"]]
+    for f in chosen:
+        for l in f.loops:
+            fu = (l.vert.co.x - x0) / (x1 - x0)
+            fv = (l.vert.co.z - z0) / (z1 - z0)
+            l[uv].uv = (u0 + fu * (u1 - u0), v0 + fv * (v1 - v0))
 
 
 def main():
@@ -346,6 +389,8 @@ def main():
         if name not in pieces:
             raise SystemExit("the base has no piece for bone %s (pieces: %s)"
                              % (part["bone"], ", ".join(sorted(pieces))))
+        if part.get("front_cell", part["cell"]) not in cells:
+            raise SystemExit("part on %s uses cell %s, which the atlas does not have" % (part["bone"], part["front_cell"]))
         if part["cell"] not in cells:
             raise SystemExit("part on %s uses cell %s, which the atlas does not have" % (part["bone"], part["cell"]))
         by_piece.setdefault(name, []).append(part)

@@ -167,8 +167,15 @@ part's front is the middle of the cell):
    also be a convex polygon (a shirt's V, a lapel) or a picture: crop a face,
    a cloth pattern or a hand straight out of a reference screenshot
    (`{"image": "ref.png", "crop": [x, y, w, h], "rect": [...], "mask":
-   "ellipse", "feather": 0.25}`), which gets closest to the original. The
-   script's docstring has the format.
+   "ellipse", "feather": 0.25}`), which gets closest to the original.
+   For a face, don't wrap the photo round the head: give the head part
+   `"front_cell": "face"` and `"front_aspect"` (the photo's width / height),
+   so its forward-looking faces take the photo straight on from the front,
+   undistorted, as N64 heads did; paint hair under the photo and use
+   `"key": [r, g, b]` to make the screenshot's background round the head
+   transparent. Check it straight on and at 35 and 70 degrees
+   (`tools/blender/ts2_portrait.py --yaw`). The script's docstring has the
+   format.
 3. Export any TS2 human as the base (it supplies the skeleton), build, look
    at the preview, adjust the spec, repeat:
 
