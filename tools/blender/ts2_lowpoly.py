@@ -35,7 +35,12 @@ The spec (JSON):
     face) in a `size` atlas, placed in order where it fits. Its
     base colour is multiplied top to bottom by `gradient`; shapes are painted
     over it in order (x, y, w, h and cx, cy, rx, ry in 0..1 of the cell, y
-    down from the top; `soft` feathers the edge, in pixels); then the atlas
+    down from the top; `soft` feathers the edge, in pixels). A shape can
+    also be a picture: {"image": "face.png", "rect": [...], "crop": [x, y,
+    w, h] (its pixels, optional), "mask": "ellipse" or "rect", "feather":
+    0.15}, the path relative to the spec, e.g. a face or a cloth texture
+    taken from reference screenshots. And {"polygon": [[x, y], ...]} (convex,
+    0..1 of the cell) for a V or a lapel. Then the atlas
     is blurred by `blur` pixels (the atlas's, or the cell's own).
   - A cell wraps around its part: u 0.5 is the part's front (the
     character's front), 0 and 1 its back, 0.25 its right side and 0.75 its
@@ -55,6 +60,7 @@ The spec (JSON):
 import argparse
 import json
 import math
+import os
 import sys
 
 import bpy
@@ -82,7 +88,21 @@ def _coverage(cell, shape):
     n = cell
     yy, xx = np.mgrid[0:n, 0:n].astype(np.float32) + 0.5
     soft = max(0.5, float(shape.get("soft", 0.75)))
-    if "rect" in shape:
+    if "polygon" in shape:
+        # Convex polygon: the distance outside its farthest edge.
+        pts = [(px_ * n, py_ * n) for px_, py_ in shape["polygon"]]
+        area = sum(pts[i][0] * pts[(i + 1) % len(pts)][1] - pts[(i + 1) % len(pts)][0] * pts[i][1]
+                   for i in range(len(pts)))
+        sgn = 1.0 if area > 0 else -1.0
+        d = np.full((n, n), -1e9, dtype=np.float32)
+        for i in range(len(pts)):
+            (x0, y0), (x1, y1) = pts[i], pts[(i + 1) % len(pts)]
+            ex, ey = x1 - x0, y1 - y0
+            ln = max(1e-6, math.hypot(ex, ey))
+            # Outward normal (y down, so the turn is mirrored).
+            nx, ny = ey / ln * sgn, -ex / ln * sgn
+            d = np.maximum(d, (xx - x0) * nx + (yy - y0) * ny)
+    elif "rect" in shape:
         x, y, w, h = (v * n for v in shape["rect"])
         dx = np.maximum(x - xx, xx - (x + w))
         dy = np.maximum(y - yy, yy - (y + h))
@@ -107,7 +127,47 @@ def _blur(px, radius):
     return px
 
 
-def paint_atlas(spec):
+def _image_block(shape, n, base_dir):
+    """An image shape: (rgb, alpha) for an n x n cell, the picture (cropped by
+    `crop` [x, y, w, h] in its pixels, y down) resized into `rect`, its edge
+    feathered by `feather` (a fraction of the rect) inside a rect or ellipse
+    `mask`."""
+    import os
+    path = shape["image"] if os.path.isabs(shape["image"]) else os.path.join(base_dir, shape["image"])
+    img = bpy.data.images.load(path, check_existing=True)
+    w, h = img.size
+    src = np.array(img.pixels[:], dtype=np.float32).reshape(h, w, img.channels)[::-1, :, :3]
+    if "crop" in shape:
+        cx, cy, cw, ch = shape["crop"]
+        src = src[cy:cy + ch, cx:cx + cw]
+    x, y, rw, rh = shape["rect"]
+    x0, y0 = int(round(x * n)), int(round(y * n))
+    tw, th = max(1, int(round(rw * n))), max(1, int(round(rh * n)))
+    # Bilinear resize to th x tw.
+    sh, sw = src.shape[:2]
+    ys = np.clip((np.arange(th) + 0.5) * sh / th - 0.5, 0, sh - 1)
+    xs = np.clip((np.arange(tw) + 0.5) * sw / tw - 0.5, 0, sw - 1)
+    y_lo, x_lo = np.floor(ys).astype(int), np.floor(xs).astype(int)
+    y_hi, x_hi = np.minimum(y_lo + 1, sh - 1), np.minimum(x_lo + 1, sw - 1)
+    fy, fx = (ys - y_lo)[:, None, None], (xs - x_lo)[None, :, None]
+    top = src[y_lo][:, x_lo] * (1 - fx) + src[y_lo][:, x_hi] * fx
+    bot = src[y_hi][:, x_lo] * (1 - fx) + src[y_hi][:, x_hi] * fx
+    pic = top * (1 - fy) + bot * fy
+    # The mask, feathered toward its edge.
+    f = max(1e-3, float(shape.get("feather", 0.1)))
+    v, u = np.mgrid[0:th, 0:tw].astype(np.float32)
+    u, v = (u + 0.5) / tw * 2 - 1, (v + 0.5) / th * 2 - 1
+    r = np.sqrt(u * u + v * v) if shape.get("mask", "rect") == "ellipse" else np.maximum(abs(u), abs(v))
+    a = np.clip((1 - r) / f, 0, 1)
+    rgb = np.zeros((n, n, 3), dtype=np.float32)
+    alpha = np.zeros((n, n), dtype=np.float32)
+    ya, yb, xa, xb = max(0, y0), min(n, y0 + th), max(0, x0), min(n, x0 + tw)
+    rgb[ya:yb, xa:xb] = pic[ya - y0:yb - y0, xa - x0:xb - x0]
+    alpha[ya:yb, xa:xb] = a[ya - y0:yb - y0, xa - x0:xb - x0]
+    return rgb, alpha[..., None]
+
+
+def paint_atlas(spec, base_dir="."):
     size, cell = spec.get("size", 256), spec.get("cell", 64)
     grid = size // cell
     used = np.zeros((grid, grid), dtype=bool)
@@ -128,6 +188,10 @@ def paint_atlas(spec):
         top, bottom = c.get("gradient", (1.0, 1.0))
         block *= np.linspace(top, bottom, n, dtype=np.float32)[:, None, None]
         for shape in c.get("shapes", []):
+            if "image" in shape:
+                pic, a = _image_block(shape, n, base_dir)
+                block = block * (1 - a) + pic * a
+                continue
             a = _coverage(n, shape)[..., None]
             block = block * (1 - a) + np.array(shape["colour"], dtype=np.float32) * a
         px[cy:cy + n, cx:cx + n] = np.clip(_blur(block, float(c.get("blur", spec.get("blur", 1.2)))), 0, 1)
@@ -273,7 +337,7 @@ def main():
     # are left out of the export, and so removed.
     pieces = {o.name.split("_", 1)[1]: o for o in bpy.context.scene.objects
               if o.type == "MESH" and o.name[:1] == "p" and o.name.split("_", 1)[0].endswith("s0")}
-    img, cells = paint_atlas(spec["atlas"])
+    img, cells = paint_atlas(spec["atlas"], os.path.dirname(os.path.abspath(a.spec)))
     mat = atlas_material(img)
 
     by_piece = {}

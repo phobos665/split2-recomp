@@ -117,8 +117,12 @@ part's front is the middle of the cell):
    soft rectangles and ellipses: a face is a skin cell with hair, brows,
    eyes, nose and mouth as shapes; give it `"span": 2` for a 128-pixel cell)
    and parts (rings `[t, width, depth]` along a bone, `sides`, `round`, and
-   `"front": 2` on the head so the face gets most of its cell). The script's
-   docstring has the format.
+   `"front": 2` on the head so the face gets most of its cell). A shape can
+   also be a convex polygon (a shirt's V, a lapel) or a picture: crop a face,
+   a cloth pattern or a hand straight out of a reference screenshot
+   (`{"image": "ref.png", "crop": [x, y, w, h], "rect": [...], "mask":
+   "ellipse", "feather": 0.25}`), which gets closest to the original. The
+   script's docstring has the format.
 3. Export any TS2 human as the base (it supplies the skeleton), build, look
    at the preview, adjust the spec, repeat:
 
