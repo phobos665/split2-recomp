@@ -194,6 +194,29 @@ mount order, first match wins (code `0x00086368`-`0x000863B8`). So:
   chrinc has 155 files: every chr id 0-157 except 17 (chr18), 146 and 147
   (chr147, chr148), and it has chr104, which chr.pak lacks (measured).
 
+### The mounted paks, and loose mod files
+
+The table the lookups walk is at `0x00358A38`: 25 records of 0x20 bytes,
+the count at `0x00358A18` (code: `sub_00085DB0`, `sub_00085C50`). A record
+is the open file (+0), the entry count (+0xC), the pak's address when the
+whole pak is read into memory (+0x10; the `anim*.pak` files, mounted from
+`sub_00012CD0`), a P4CK directory (+0x14: 60-byte entries, name[48],
+position, length, packed length) or a P8CK one (+0x18: 12-byte entries,
+name pointer, length, position, sorted by name and binary searched), and
+the pak's path (+0x1C). Every reader asks `sub_00086300` (P4CK, every
+mounted pak, the last match first) and then `sub_000860A0` (P8CK, in mount
+order), so a P4CK pak's copy of a name wins over a P8CK pak's whatever the
+mount order. The entry's length and position are all the four readers use:
+`sub_00086430` (length), `sub_000863C0` (address, for a pak in memory),
+`sub_000864B0` (seek and read) and `sub_00086880` (overlapped read: the
+`chrinc` previews and streamed loads, polled by `sub_00086970`). Nothing
+else reads the table (code: every reference to `0x358A18`-`0x358A54`,
+`0x358D64` and `0x2BABF8`).
+
+split2-recomp puts a mod's loose files (`files/`, `paks/<pak>/`) into that
+directory as each pak is mounted, and reads them from the mod in the two
+read functions (`ts2_paks_*` in `src/recomp_manual.c`, `docs/modding.md`).
+
 ### Per-level character lists
 
 The set of characters a level loads is a table in the XBE, not the pak:
@@ -718,29 +741,41 @@ Siberia (`l_35_ST.pak`), with no unresolved indirect calls in any run.
 
 What split2-recomp does, PAL only (`src/recomp_manual.c`, "extra playable
 characters"; addresses in `config/pal/overrides.inc`). A mod folder for
-`RECOMP_MODS` holds:
+`RECOMP_MODS` holds loose files, which the game serves from inside its paks
+at run time (`docs/modding.md`, "How a mod reaches the game"):
 
 | File | What |
 |---|---|
-| `data/chr.pak` | `ob/chrs/chr{id+1:02d}.xbr` replaced, and any new `textures/NNNN.xbt` it uses |
-| `data/chrinc.pak` | `ob/chrincs/chr{id+1:02d}.xbr`, the select screen's preview, textures inside |
-| `data/arcade/l_101.pak` | the portrait, `textures/misc/chrimage_<name>.xbt` (64x64 DXT3, as `chrimage_ped3.xbt`); `ts2kitbash` also puts it in `l_102.pak` and `gun.pak` |
+| `paks/chr.pak/ob/chrs/chr{id+1:02d}.xbr` | the model, and any new `paks/chr.pak/textures/NNNN.xbt` it uses |
+| `paks/chrinc.pak/ob/chrincs/chr{id+1:02d}.xbr` | the select screen's preview, textures inside |
+| `paks/arcade/l_101.pak/textures/misc/chrimage_<name>.xbt` | the portrait (64x64 DXT3, as `chrimage_ped3.xbt`); `ts2kitbash` also puts it in `l_102.pak` and `gun.pak` |
 | `ts2/characters.ini` | the declaration, below |
 
 `tools/ts2kitbash.py` makes all of it from a recipe
 (`tools/examples/characters.json`: body, head, colours, and the roster slot,
-description, set and unlock), `ts2/characters.ini` included;
-`tools/ts2mod.py build` makes the paks from the `paks/<pak>/<path>` source
-tree and copies `ts2/` across:
+description, set and unlock), `ts2/characters.ini` included, and its output
+folder is the mod (`tools/ts2mod.py build` can still turn it into rebuilt
+`data/*.pak`, one self-contained folder that does not stack):
 
 ```bash
-python3 -I tools/ts2kitbash.py tools/examples/characters.json game/data <work> <source>
-python3 -I tools/ts2mod.py build <source> game/data <mod>
-RECOMP_MODS=<mod> ./split2_recomp
+python3 -I tools/ts2kitbash.py tools/examples/characters.json game/data <work> <mod>
+RECOMP_MODS=<mod>:<another mod> ./split2_recomp
 ```
 
-Only the first `RECOMP_MODS` folder with a `ts2/characters.ini` is read
-(xboxrecomp `xbox_mods_find`).
+Every `RECOMP_MODS` folder's `ts2/characters.ini` is read, in that order
+(`ts2_chars_main`, `ts2_chars_resolve`), and the sections of all of them
+are one list:
+
+- A section whose chr id an earlier section already has, earlier in the
+  list (an earlier mod, or earlier in the same file), is skipped with a
+  `[TS2-CHR]` line naming both; so is a numbered `slot` an earlier section
+  already numbered.
+- Then each `slot = next`, in list order, takes the first spare slot
+  (127-158) that no remaining section names. Numbered slots are placed
+  first, so a later mod's `slot = 130` is kept and an earlier mod's `next`
+  takes another slot. When the 32 are used up, the rest are skipped, with a
+  line each.
+- `tools/ts2mod.py check <mod>...` reports the same clashes without a run.
 
 ```ini
 [Agent Static]
@@ -755,13 +790,12 @@ stats = 68                 ; optional: copy definition +0x2C-+0x3C from this chr
 sounds = 68                ; optional: copy the sound set (+0x04)
 ```
 
-Up to 48 sections. Before the game's `main` (`sub_000D99F0`) runs, each one
+Up to 64 sections in all. Before the game's `main` (`sub_000D99F0`) runs, each one
 writes its roster entry (chr id, kind, background), points its name's text
 id and its description's id at new strings in every language, points the
 slot's texture-list entry at the new portrait's path (a spare slot's entry
 also gets slot 0's portrait's load flags, so the front end loads it), and
-copies the stats and sound set if asked. `slot = next` takes the first
-spare slot no other section names; numbered slots are kept as given. Then
+copies the stats and sound set if asked (slots as above). Then
 the hidden entries are moved behind the shown ones (above). A value may not
 contain `;` (the reader takes the rest of the line for a comment).
 

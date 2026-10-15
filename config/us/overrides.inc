@@ -219,3 +219,9 @@ const Ts2UiPlace k_ts2_ui_places[] = {
  * found in this release yet, so a mod's characters.ini is reported and left
  * alone (roster 0). PAL's are in config/pal/overrides.inc. */
 const Ts2Roster k_ts2_roster = { 0 };
+
+/* Loose mod files inside the paks: the pak table and its readers have not
+ * been found in this release yet (table 0), so files/ and paks/ in a mod are
+ * not served; whole data/*.pak files in a mod still are (the toolkit's
+ * RECOMP_MODS). PAL's are in config/pal/overrides.inc. */
+const Ts2Paks k_ts2_paks = { 0 };

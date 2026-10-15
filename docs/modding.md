@@ -10,33 +10,77 @@ changes yet.
 
 ## How a mod reaches the game
 
-A mod is a folder laid out like the disc (`data/chr.pak`, ...). Run the game
-with it:
+A mod is a folder of loose files. Run the game with one or several, earlier
+ones first in priority (`;` between them on Windows):
 
 ```bash
 cd build/Release
-RECOMP_MODS=/path/to/mod ./split2_recomp
+RECOMP_MODS=/path/to/modA:/path/to/modB:/path/to/modC ./split2_recomp
 ```
 
-A file the game opens from the disc is read from the mod instead when the mod
-has it (`[MODS] ... from ...` in the log). Mods replace whole paks, so a mod
-is built with `tools/ts2mod.py`, which rewrites the paks it needs from a
-*source folder*:
+Every file the game reads is inside a `.pak`, so a mod holds files from
+inside paks, by where they go:
 
 ```text
-files/<path in a pak>              replaces that file in every pak that holds it
-paks/<pak>/<path in a pak>         replaces or adds a file in that one pak
+files/<path in a pak>              that file in every pak that holds it
+paks/<pak>/<path in a pak>         that file in that one pak (added if the pak lacks it)
 ts2/characters.ini                 characters the mod adds to the roster
+data/<pak>                         optional: a whole pak, as on the disc
 ```
+
+`paks/chr.pak/ob/chrs/chr71.xbr` is a model in `chr.pak`;
+`paks/arcade/l_101.pak/textures/misc/chrimage_chr71.xbt` a portrait in the
+front end's pak; `files/textures/0267.xbt` a texture everywhere it is used.
+Every story and arcade level pak carries its own copy of the characters in
+it, which is why `files/` exists: one file reaches all of them.
+
+**Mods stack.** The game serves these files while it runs (PAL;
+`ts2_paks_*` in `src/recomp_manual.c`): as it opens a pak it puts each mod's
+files into that pak's directory, with their own sizes, and reads them from
+the mod. For one name in one pak the first mod in `RECOMP_MODS` that has it
+wins (a mod's `paks/<pak>/` before its `files/`), then the pak's own copy.
+A name a pak does not have is added to it (`files/`: to every level, `chr`,
+`gun` and `sounds` pak, so a new texture is found in any level). Every mod's
+`ts2/characters.ini` is read, in order, and their characters are added
+together (below). Mod folders are indexed once at start-up, and the log says
+what each one gave each pak (`[TS2-MODS] data/chr.pak: 7 files from mods`;
+`RECOMP_TS2_MODS_TRACE=1` lists them).
+
+Conflicts are settled by order and reported, never fatal:
+
+- Two mods with the same file for the same pak: the earlier one's is used,
+  and if they differ the log names both (`[TS2-MODS] textures/8691.xbt: mod 0
+  (...) and mod 3 (...) both supply it ...`). New texture ids are picked from
+  a hash of the picture (8000-9999), so two mods' textures rarely meet; when
+  they do, rebuild one of them.
+- Two characters with the same chr id, or the same numbered `slot`: the
+  earlier mod's is added and the later one skipped (`[TS2-CHR] ... chr id 70
+  is already [Agent Static]'s (mod 0, ...); skipped`). `slot = next` takes
+  the next free spare slot across all mods, up to the 32 there are.
+- A whole `data/<pak>` is the toolkit's: the first mod that has one wins it
+  entirely. Loose files from every mod still go on top of it.
+- `textures/0478.xbt` is a different picture in `story/l_20_ST.pak` and
+  `arcade/l_43_AR.pak` than in `chr.pak` (the one name on the disc with two
+  contents). A `files/` entry replaces a pak's copy only where it is as long
+  as `chr.pak`'s, so those two levels keep theirs; to change a clashing name
+  there, use `paks/<that pak>/`.
+
+`tools/ts2mod.py check modA modB modC` reports all of this before a run.
+
+A mod made by the tools below is such a folder already. For a player who
+wants one self-contained folder of rebuilt paks instead (no stacking:
+whole paks), `ts2mod build` makes it:
 
 ```bash
-python3 -I tools/ts2mod.py build <source> game/data <mod>
+python3 -I tools/ts2mod.py loose <source> <mod> --data game/data   # copy as it is, with mod.json
+python3 -I tools/ts2mod.py build <source> game/data <mod>          # rebuilt data/*.pak
+python3 -I tools/ts2mod.py check <mod> [<mod> ...]                 # overlaps between mods
 ```
 
-Every story and arcade level pak carries its own copy of the characters in
-it, which is why `files/` writes into all of them. Two mods do not stack yet:
-the first one that has a pak wins, and only the first `characters.ini` is
-read, so put everything in one source.
+`loose --data` also copies in the disc's textures that a model in the mod
+names and a pak it goes into lacks (a body and a head from two characters,
+in a level that carries only one of them). The USA release reads only whole
+paks and the first `characters.ini` so far: its pak code has not been found.
 
 ## The tools
 
@@ -47,7 +91,7 @@ read, so put everything in one source.
 | `ts2xbr.py` | character models: parse, check, rewrite |
 | `ts2gltf.py` | models to and from glTF (`gltf`, `fromgltf`), and `graft` pieces between characters |
 | `ts2kitbash.py` | build whole characters from a recipe: model, preview, portrait, roster entry |
-| `ts2mod.py` | build a mod from a source folder |
+| `ts2mod.py` | `loose`: a mod folder of loose files (stacks); `build`: rebuilt paks in one folder; `check`: overlaps between mods; `where`: which paks hold a file |
 | `blender/ts2_character` | Blender add-on: File > Import/Export > TimeSplitters 2 character |
 | `blender/ts2_lowpoly.py` | build a low-poly character from boxes, on TS2's skeleton |
 | `blender/ts2_portrait.py` | render a character-select portrait |
@@ -73,7 +117,9 @@ source folder.
    bone; TS2 has no blend weights, so a vertex follows exactly one bone (a
    weight-painted mesh is snapped to its strongest allowed bone).
 3. Sidebar > TS2 > Write into mod folder.
-4. `ts2mod build`, run with `RECOMP_MODS`.
+4. Run with `RECOMP_MODS=<mod folder>`: the add-on writes `files/`, which the
+   game reads as it is (or `ts2mod loose --data game/data` first, when the
+   model takes pieces from another character).
 
 `chrNNlod2.xbr` is the same character far away, a separate model: edit it too
 or the change disappears at a distance. The character-select preview is
@@ -133,16 +179,21 @@ screenshots of an older game:
 Then, for any of the three:
 
 ```bash
-python3 -I tools/ts2kitbash.py <recipe.json> game/data <work> <source>
-python3 -I tools/ts2mod.py build <source> game/data <mod>
+python3 -I tools/ts2kitbash.py <recipe.json> game/data <work> <mod>
+RECOMP_MODS=<mod> ./split2_recomp            # or <mod>:<another mod>
 ```
 
-`ts2kitbash` writes the model into `chr.pak`, the select-screen preview into
-`chrinc.pak`, a portrait rendered in Blender into the front end's paks, and
-`ts2/characters.ini`. In Arcade Custom the new characters are at the end of
-the Select Character list (press up from the start), unlocked from the start;
-they are in the Gallery too. New texture ids are picked from 8000-9999 by a
-hash of the picture, so two characters' textures rarely collide.
+`ts2kitbash` writes a mod folder (loose files and `mod.json`), which stacks
+with any other: the model into `paks/chr.pak/`, the select-screen preview
+into `paks/chrinc.pak/`, a portrait rendered in Blender into the front end's
+paks, and `ts2/characters.ini`. Two recipes built separately (say Agent
+Static and The Bone Ranger in one, Monkey Business in another) give two mods
+whose characters all appear together.
+
+In Arcade Custom the new characters are at the end of the Select Character
+list (press up from the start), unlocked from the start; they are in the
+Gallery too. New texture ids are picked from 8000-9999 by a hash of the
+picture, so two characters' textures, even from two mods, rarely collide.
 
 ## Keeping a character private
 

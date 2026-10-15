@@ -7,7 +7,8 @@ the .xbr it came from. File > Export > TimeSplitters 2 character (.xbr)
 writes the armature's meshes to a .glb with the settings ts2gltf expects
 and imports that over the remembered .xbr (ts2gltf.py fromgltf), new
 textures included. The TS2 tab of the 3D view's sidebar has the same, and
-"Write into mod folder", which lays the files out for tools/ts2mod.py.
+"Write into mod folder", which lays the files out as a mod (files/), which
+the game reads as it is and tools/ts2mod.py takes as a source.
 
 docs/formats/xbr.md, "Editing in Blender", says what survives the trip.
 """
@@ -266,7 +267,7 @@ class TS2_OT_export(Operator, ExportHelper, ExportProps):
 
 class TS2_OT_write_mod(Operator, ExportProps):
     """Write the character into the mod folder: files/ob/chrs/<name>.xbr (ob/chrincs for a front-end preview)
-and files/textures/NNNN.xbt, as tools/ts2mod.py build takes them"""
+and files/textures/NNNN.xbt: a mod folder the game reads as it is (RECOMP_MODS), and a tools/ts2mod.py source"""
     bl_idname = "ts2.write_mod"
     bl_label = "Write into mod folder"
     mod_dir: StringProperty(name="Mod folder", subtype="DIR_PATH")
