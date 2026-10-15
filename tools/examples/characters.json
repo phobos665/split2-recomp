@@ -1,0 +1,29 @@
+{
+ "about": "Three extra characters for tools/ts2kitbash.py, built from the disc's files. Slots chr71-chr73 are NeoTokyo pedestrians (chr ids 70-72), carried by no arcade pak.",
+ "characters": [
+  {"name": "Agent Static",
+   "slot": "chr71", "chr_id": 70,
+   "body": "chr69", "head": "chr133",
+   "about": "Jake Fenton's suit, R-109's head; the vest electric teal, the shirt cool grey",
+   "recolour": {"475": {"hue": 0.48, "sat": 0.85, "light": 1.25},
+                "472": {"tint": [0.72, 0.84, 0.92]}},
+   "portrait_colour": [0.1, 0.75, 0.7]},
+  {"name": "The Bone Ranger",
+   "slot": "chr72", "chr_id": 71,
+   "body": "chr07", "head": "chr64",
+   "about": "Elijah Jones's duster, X-Ray Skel's skull; the coat near-black",
+   "recolour": {"48": {"tint": [0.3, 0.28, 0.27]},
+                "52": {"tint": [0.3, 0.28, 0.27]},
+                "54": {"tint": [0.3, 0.28, 0.27]}},
+   "portrait_colour": [0.9, 0.45, 0.1]},
+  {"name": "Monkey Business",
+   "slot": "chr73", "chr_id": 72,
+   "body": "chr134", "head": "chr03",
+   "about": "Mr Underwood's tweed suit, Monkey's head; the tweed purple",
+   "recolour": {"815": {"hue": 0.78, "sat": 0.5, "light": 1.1},
+                "819": {"hue": 0.78, "sat": 0.5, "light": 1.1},
+                "820": {"hue": 0.78, "sat": 0.5, "light": 1.1},
+                "821": {"hue": 0.78, "sat": 0.5, "light": 1.1}},
+   "portrait_colour": [0.6, 0.25, 0.85]}
+ ]
+}
