@@ -22,7 +22,7 @@ A recipe is JSON:
   - The preview (chrinc.pak) is the in-game model with its textures
     embedded, as 149 of the disc's 154 previews are.
   - The portrait (textures/misc/chrimage_<slot>.xbt in data/arcade/
-    l_101.pak, 64x64 DXT3) is rendered in Blender by
+    l_101.pak, and l_102.pak and gun.pak, 64x64 DXT3) is rendered in Blender by
     tools/blender/ts2_portrait.py.
 
 Only chr.pak, chrinc.pak and l_101.pak are written (the paks/ form), so a
@@ -51,6 +51,7 @@ import ts2xbt  # noqa: E402
 
 FIRST_NEW_TEXTURE = 8000
 PORTRAIT_BASE = "textures/misc/chrimage_ped3.xbt"     # header to copy (64x64 DXT3)
+PORTRAIT_PAKS = ("arcade/l_101.pak", "arcade/l_102.pak", "gun.pak")
 PREVIEW_LIMIT = 512000      # the front end loads a preview into a buffer this size
 BLENDER = "/Applications/Blender.app/Contents/MacOS/Blender"
 
@@ -155,7 +156,11 @@ def build_character(c, ctx, next_id):
     run([ctx["blender"], "-b", "--factory-startup", "--python",
          os.path.join(TOOLS, "blender", "ts2_portrait.py"), "--", glb, png, "--colour", colour], quiet=True)
     portrait, _ = ts2xbt.import_image(ctx["portrait_base"], open(png, "rb").read(), "png")
-    ctx["put"]("paks/arcade/l_101.pak/textures/misc/chrimage_%s.xbt" % c["slot"], portrait)
+    # Every pak that carries the shipped portraits gets the new one: the front
+    # end's l_101.pak, and l_102.pak and gun.pak (where those copies are
+    # shown is not traced).
+    for pak in PORTRAIT_PAKS:
+        ctx["put"]("paks/%s/textures/misc/chrimage_%s.xbt" % (pak, c["slot"]), portrait)
     print("%s: %s (body %s, head %s), textures %s" % (c["name"], c["slot"], c["body"], c["head"],
                                                      sorted(new_ids.values()) or "unchanged"))
     return next_id
