@@ -1,0 +1,17 @@
+schema_version = "1.0.0"
+
+id = "ts2_character"
+version = "1.0.0"
+name = "TimeSplitters 2 character"
+tagline = "Import and export TimeSplitters 2 (Xbox) character models (.xbr)"
+maintainer = "split2-recomp"
+type = "add-on"
+tags = ["Import-Export"]
+
+blender_version_min = "4.2.0"
+
+# Add-ons that use bpy must be GPL-compatible.
+license = ["SPDX:GPL-3.0-or-later"]
+
+[permissions]
+files = "Reads .xbr, .xbt and bind pose files, writes .xbr and .xbt files"

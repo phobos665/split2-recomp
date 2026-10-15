@@ -407,7 +407,11 @@ size; the largest is `chr104.xbr`, 358,760).
 - `+0x60`, `+0x62` and the draw headers are derived: the tool recomputes them.
 - Material ids must exist in a mounted pak's `textures/` (chr.pak's 981 ids
   are used by chr.pak models only). A new texture needs a new id, a new
-  `.xbt` and repacked paks (`tools/ts2pak.py`).
+  `.xbt` and repacked paks (`tools/ts2pak.py`). The disc uses ids 0 to 5293
+  (4,113 ids in the 68 paks, and every id an `.xbr` names is among them;
+  measured), so `ts2gltf.py` gives new textures ids from **8000 to 9999**.
+  The loader finds a texture by searching its list for the id, with no table
+  indexed by id (code `sub_001B8290`), so the number itself is not limited.
 - The game loads the file in place and relocates it, so there is no size
   limit beyond memory for `chr.pak`. Level paks carry their own copies of
   the characters they use (`docs/formats/roster.md`), and those copies must
@@ -444,6 +448,7 @@ python3 -I tools/ts2xbr.py joints   chr01.xbr human_19_bindpose.raw
 python3 -I tools/ts2xbr.py obj      chr01.xbr chr01.obj --textures <unpacked chr.pak>/textures
 python3 -I tools/ts2gltf.py gltf    chr01.xbr chr01.glb --textures <unpacked chr.pak> --bindpose <bind pose folder>
 python3 -I tools/ts2gltf.py fromgltf chr01.xbr edited.glb new.xbr   # see Editing in Blender
+python3 -I tools/ts2gltf.py graft    chr19.xbr chr01.xbr new.xbr --pieces head   # see Combining two characters
 ```
 
 `obj` writes one group per piece and section, in bind pose. It writes PNGs of
@@ -457,7 +462,42 @@ parses, every byte is accounted for, and every rewrite is byte-identical.
 
 `tools/ts2gltf.py` converts a model to glTF 2.0 binary (`.glb`) and back.
 Blender (tested with 5.2) imports and exports `.glb` with its armature and
-skin. The converter itself needs only Python 3.
+skin. The converter itself needs only Python 3. The Blender add-on (below)
+does both steps from Blender's File menu.
+
+**The add-on** (`tools/blender/ts2_character`, Blender 4.2 or later; tested
+with 5.2). Build the zip, which carries its own copy of `ts2gltf.py`,
+`ts2xbr.py` and `ts2xbt.py`, and install it:
+
+```text
+python3 -I tools/blender/build_addon.py          # -> build/ts2_character-1.0.0.zip
+```
+
+In Blender: Edit > Preferences > Get Extensions, the menu at the top right,
+Install from Disk, and pick the zip (or `blender --command extension
+install-file -r user_default -e build/ts2_character-1.0.0.zip`). In the
+add-on's preferences (Edit > Preferences > Add-ons > TimeSplitters 2
+character) set the bind pose folder (the folder holding
+`human_19_bindpose.raw`, or an unpacked `fe_anim.pak`) and, as defaults, the
+textures folder (an unpacked `chr.pak`) and a mod folder (unpack the paks as
+in step 1 below).
+
+- File > Import > TimeSplitters 2 character (.xbr) asks for the textures
+  folder, exports the model to a `.glb` and loads it with Blender's glTF
+  importer. The armature keeps the `.xbr`'s path (custom property
+  `ts2_source`).
+- File > Export > TimeSplitters 2 character (.xbr), with the armature or one
+  of its meshes selected, exports the armature's meshes with the settings
+  below and runs `fromgltf` over that `.xbr`. New textures go to a
+  `textures/` folder beside the output, or to `<mod>/files/textures` when
+  the output is under a `files/` folder. With two armatures selected (two
+  models combined), the active one is the base.
+- The 3D view's sidebar, tab TS2: the same, and **Write into mod folder**,
+  which writes `<mod>/files/ob/chrs/<name>.xbr` (`ob/chrincs` for a
+  front-end preview) and `<mod>/files/textures/NNNN.xbt` for
+  `tools/ts2mod.py build`.
+
+By hand:
 
 ```text
 # 1. unpack the character pak, the bind poses and (for the mod) nothing else
@@ -470,8 +510,10 @@ python3 -I tools/ts2gltf.py gltf work/chr/ob/chrs/chr01.xbr chr01.glb \
 
 # 3. edit chr01.glb in Blender (below), export it as chr01_edited.glb
 
-# 4. import: geometry from the .glb, everything else from the original
-python3 -I tools/ts2gltf.py fromgltf work/chr/ob/chrs/chr01.xbr chr01_edited.glb mod/files/ob/chrs/chr01.xbr
+# 4. import: geometry and materials from the .glb, everything else from the original
+#    (new textures are written to mod/files/textures)
+python3 -I tools/ts2gltf.py fromgltf work/chr/ob/chrs/chr01.xbr chr01_edited.glb mod/files/ob/chrs/chr01.xbr \
+    --textures work/chr --bindpose work/fe_anim/anim/data/ts2
 
 # 5. put it in every pak that carries chr01 and run
 python3 -I tools/ts2mod.py build mod game/data modout
@@ -506,10 +548,17 @@ and Skinning on. Animation can be turned off. Moving an object in object
 mode is fine: `fromgltf` places vertices where Blender shows them.
 
 **What `fromgltf` does.** It reads positions, normals, UVs, vertex colours,
-triangles and their material from the `.glb`, and everything else from the
-base `.xbr`. Objects map to pieces by name (`pNNsS`), joints to palette bones
-by name, slots to materials by the `mN` prefix. Vertices are put in model
-space by the skin at rest. Each vertex gets one bone: a rigid piece's own; in a
+triangles and their materials from the `.glb`, and everything else from the
+base `.xbr`. Objects map to pieces by name: `pNNsS_name` goes to piece NN
+when the base's piece NN is `name`, else to the base's piece called `name`
+(so an object exported from another model lands on the matching piece; a
+piece the base lacks is an error that points to `graft`). Joints map to
+palette bones by name; a joint the base lacks is only an error if a vertex
+is weighted to it. Vertices are put in model space by the skin at rest. With
+`--bindpose`, the skin's bind is the base's: each vertex keeps its place
+relative to its bone and goes to that bone's bind in the base, which is what
+places a head exported from a model of another scale on this model's neck
+(without it, `fromgltf` warns when two armatures in the file disagree). Each vertex gets one bone: a rigid piece's own; in a
 skinned piece the strongest-weighted of the bones that piece can use (the
 c64, c68 and own bones of [Skinning](#skinning-how-a-piece-is-bound-to-its-matrices)),
 or the nearest of them when none is weighted. It prints how many vertices
@@ -540,21 +589,98 @@ Colours Blender writes without alpha get the base section's alpha (127 in
 every coloured vertex on the disc). `--regenerate` rebuilds every section.
 The output is parsed and rebuilt before it is written.
 
+**Materials and textures.** The material list is rebuilt from what the
+meshes use. Every material on the disc has flags 0 (`chr.pak`) or
+`0x10000000`, embedded (`chrinc.pak`) (measured), so flags come from a base
+material with the same texture and are 0 otherwise. A glTF material:
+
+- named `mN_tTTTT` (as exported, a `.001` suffix is fine) uses texture
+  `TTTT`: the base's material N when it has that texture, else a material
+  for `TTTT`. A material from another model keeps its texture this way;
+- named anything else, with an image: the image (PNG, sides powers of two)
+  is encoded as a new `.xbt` (`ts2xbt.new_xbt`: DXT1, or DXT3 when a texel's
+  alpha is under 255; the whole mip chain; no detail texture) under a new id
+  from 8000-9999. The id comes from the picture's CRC, so exporting the same
+  picture again reuses it, and ids holding another picture in the output
+  folder are skipped. With `--retexture`, a material named `mN_tTTTT` whose
+  image differs from texture `TTTT` (compared texel by texel, which needs
+  `--textures`) is treated the same way, so a texture painted in Blender
+  needs no renaming;
+- with neither: untextured (id `0x40000000`), with a note.
+
+Base materials no record uses any more are dropped (and their embedded
+textures); the rest keep their order, so an unedited model is unchanged.
+New `.xbt` files go to `--texture-dir`, or `<mod>/files/textures` when the
+output is under a `files/` folder, or `textures/` beside the output.
+`tools/ts2mod.py build` puts a model's textures into every pak the model
+goes into that lacks them: the mod's `files/textures/NNNN.xbt` first, else
+the disc's copy (`chr.pak`'s), which is what a model built from two
+characters needs in a level pak that carried only one of them.
+
+Over a `chrinc.pak` preview the textures must be inside the file. With
+`--textures <unpacked chr.pak>`, `fromgltf` finds the preview's `chr.pak`
+counterpart (`ob/chrs/<same name>`: the material lists correspond index for
+index, measured for all 154 pairs), so `mN_tTTTT` maps to the preview's own
+embedded texture for that id (its colours, not `chr.pak`'s); a texture the
+preview does not have is embedded from `--textures`, and a new picture is
+embedded as encoded. Without a counterpart `mN_tTTTT` maps to material N by
+index, with a note. The file must stay within the front end's 512,000-byte
+buffer: a larger one is refused, with the embedded textures' sizes.
+
+**Combining two characters.** The 155 human models share one skeleton
+(above), so a piece of one model fits the same bone in another. `graft`
+does it on the `.xbr` files:
+
+```text
+python3 -I tools/ts2gltf.py graft work/chr/ob/chrs/chr19.xbr work/chr/ob/chrs/chr01.xbr \
+    mod/files/ob/chrs/chr19.xbr --pieces head --textures work/chr --bindpose work/fe_anim/anim/data/ts2
+```
+
+writes chr19 with chr01's head (`.glb` as the output writes the `.xbr`
+beside it too, for editing). `--pieces` takes animation bones (`head`,
+`b04_head` or `4`, comma-separated). For each, the donor's rigid piece
+replaces the base's, and so do the **joint pieces bound to it** (types 1-3
+whose c64 or c68 piece is the grafted one: the neck joint and the
+chest-to-head bridges for a head). The base's own such pieces are emptied.
+That puts the seam where the donor's joint geometry meets the base's body,
+which is where the donor's head was built to sit; the base's joint
+geometry, built for the base's head, would leave the donor's neck open. A
+joint the base lacks is added to its tree (between the two pieces, or as a
+bridge in the parent's child list); a mid-joint the donor's pieces need
+becomes a new palette bone. Heads vary: 86 of the 238 human models have an
+empty neck joint, the head and one chest-to-head bridge; 81 the head alone;
+the rest joints with geometry, several bridges or bridges from the
+clavicle mid-joints (`chr144`). With `--bindpose`, each donor vertex keeps
+its offset from its bone and moves to that bone's bind in the base (the
+models' skeleton scales are 0.6 to 1.4), so the head sits on the base's
+neck at the donor's size. Materials follow the rules above (the donor's
+texture ids; embedded for a `chrinc` base), and the result can be edited in
+Blender like any model.
+
+The same in Blender: import both models, delete the base's head objects
+and every donor object but its head ones (`head`, `joint_neck_head`,
+`bridge_chest_head`), and export with the base's armature active (or, by
+hand, File > Export > glTF 2.0 and `fromgltf` with `--bindpose` and
+`--textures`). The donor's objects keep their own armature; `fromgltf`
+places them by name. A donor piece the base lacks needs `graft`.
+
 **Limits.** One bone per vertex: smooth weights are snapped, so blend
 between bones with geometry (as the originals do with joint and mid-joint
 pieces), not with weights. New geometry must go in an existing piece and
-can only use that piece's bones. Materials and textures are the base's
-(a new texture is a new `.xbt` under an existing id: `tools/ts2xbt.py
-import`). `chrNNlod2.xbr` is a separate model with its own pieces: export,
+can only use that piece's bones (`graft` adds the joint pieces a donor
+brings; `fromgltf` adds none). Material flags are 0 or embedded, as on the
+disc; the material's other rendering (alpha) comes from the texture and
+the section. `chrNNlod2.xbr` is a separate model with its own pieces: export,
 edit and import it too, or the character changes back at a distance (its
 piece tree differs, so the full model's `.glb` does not import over it). The
 character-select preview in `chrinc.pak` has the same pieces as the full
-model: import the same edited `.glb` over `ob/chrincs/chrNN.xbr` and it keeps
-its embedded textures (checked with `chr01`). Level paks carry their own
+model: import the same edited `.glb` over `ob/chrincs/chrNN.xbr` (with
+`--textures <unpacked chr.pak>`) and it keeps its embedded textures (checked
+with `chr01`), or graft the same pieces onto it. Level paks carry their own
 copies of the character, which `ts2mod` replaces.
 
-**Tests** (`tools/test_ts2gltf.py`, not run by any build). `roundtrip` over
-all 314 files of `chr.pak` and all 155 of `chrinc.pak`: export and import
+**Tests** (`tools/test_ts2gltf.py`, not run by any build; `-h` lists the
+commands). `roundtrip` over all 314 files of `chr.pak` and all 155 of `chrinc.pak`: export and import
 without an edit gives the original file byte for byte; with `--regenerate`
 every file parses, rebuilds identically, has strips and face lists that
 agree, records within the limit, every skinned vertex on an allowed bone,
@@ -571,6 +697,24 @@ moves positions by about 1e-8 and normals by under 0.5 degrees, duplicates a
 material it uses both with and without vertex colours (`m0_t0775.001`), and
 drops the colour alpha on some meshes.
 
+`graft` grafts heads from every one of the 154 other human models onto
+`chr19`, `chr01`, `chr128` and `chr144` (616 grafts), head, hands and feet
+onto `chr19` (154), heads between `chrinc.pak` previews onto `chr19`'s
+(153; `chr17` has no head bone) and between the 83 `lod2` models (82): every
+result parses, rebuilds identically, passes the checks above, keeps the
+base's other pieces' triangles exactly, has the donor's triangle count in
+the grafted pieces, and its `.glb` imports back over it byte for byte.
+`merge` does the Blender way (both models imported, objects deleted,
+exported, `fromgltf --bindpose`) for `chr19` with the heads of `chr01` and
+`chr128`, and `chr01` with `chr19`'s head and hands: the same triangles as
+`graft` (to 1e-4). `addon` builds the add-on, installs it into a throwaway
+Blender profile, imports `chr01`, `chr19` and the `chrinc` `chr01` with it,
+scales the head mesh by 1.6, exports, and finds the original's triangles
+with the head's scaled (0 differing of 2,048 and 1,995); Write into mod folder
+gives the same file. `render` draws a model (front, side and back, textured)
+to a PNG, which is how the grafts were looked at. The new-texture paths
+(renamed material, `--retexture`, `chrinc` embedding, the size limit) were
+checked by hand on `chr01`.
 ## Against the community references
 
 - The OpenRadical Noesis plugin (`fmt_xbox.py`) reads positions, UVs and

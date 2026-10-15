@@ -13,6 +13,11 @@ The source folder:
   paks/<pak under data>/<path in a pak>  replaces or adds a file in that one
                                          pak (paks/story/l_35_ST.pak/ob/chrs/chr200.xbr)
 
+A character model (.xbr) put into a pak brings the textures it names that
+the pak lacks: files/textures/NNNN.xbt from the mod (new textures, numbered
+from 8000 by ts2gltf.py), else the disc's copy (chr.pak's), so a character
+built from two characters' pieces finds both sets of textures in a level.
+
 The output folder gets data/<pak> for each pak that changed, laid out as
 RECOMP_MODS expects, and mod.json saying what went where.
 
@@ -23,6 +28,7 @@ RECOMP_MODS expects, and mod.json saying what went where.
 import argparse
 import json
 import os
+import struct
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -116,6 +122,70 @@ def reference_copies(paks, names):
     return ref
 
 
+def xbr_texture_ids(blob):
+    """Texture ids a character model names (materials that are not embedded):
+    the material list at 0xC, 16 bytes each, up to an id of 0xFFFFFFFF
+    (docs/formats/xbr.md)."""
+    ids = []
+    if len(blob) < 16 or struct.unpack_from("<I", blob, 0)[0] != 0xC:
+        return ids
+    o = 0xC
+    while o + 16 <= len(blob):
+        tid, _, _, flags = struct.unpack_from("<4I", blob, o)
+        o += 16
+        if tid == 0xFFFFFFFF:
+            break
+        if not flags & 0x10000000 and tid != 0x40000000:
+            ids.append(tid)
+    return ids
+
+
+class DiscTextures:
+    """textures/NNNN.xbt from the disc, chr.pak's copy first (the paks are
+    only read when a texture is asked for)."""
+
+    def __init__(self, paks):
+        self.paks = sorted(paks.items(), key=lambda kv: kv[0].lower() != "chr.pak")
+        self.index = None
+
+    def get(self, name):
+        if self.index is None:
+            self.index = {}
+            for rel, path in self.paks:
+                _, entries, _ = ts2pak.read_pak(open(path, "rb").read())
+                for e in entries:
+                    if e["name"].lower().startswith("textures/"):
+                        self.index.setdefault(e["name"].lower(), (path, e["position"], e["length"]))
+        hit = self.index.get(name.lower())
+        if hit is None:
+            return None
+        with open(hit[0], "rb") as f:
+            f.seek(hit[1])
+            return f.read(hit[2])
+
+
+def textures_needed(blobs, have, files, disc):
+    """{textures/NNNN.xbt: bytes} that the .xbr files among blobs name and the
+    pak lacks: from the mod's files/textures/ first, else the disc's copy
+    (another character's texture, for a model built from two)."""
+    out = {}
+    for name, blob in blobs.items():
+        if not name.lower().endswith(".xbr"):
+            continue
+        for tid in xbr_texture_ids(blob):
+            tn = "textures/%04d.xbt" % tid
+            if tn in have or tn in out:
+                continue
+            src = next((k for k in files if k.lower() == tn), None)
+            data = open(files[src], "rb").read() if src else disc.get(tn)
+            if data is None:
+                print("warning: %s names %s, which is neither in the mod nor on the disc" % (name, tn),
+                      file=sys.stderr)
+                continue
+            out[src or tn] = data
+    return out
+
+
 def cmd_build(args):
     files = walk_files(os.path.join(args.source, "files"))
     specific = pak_specific(args.source)
@@ -125,9 +195,10 @@ def cmd_build(args):
         if rel.lower() not in by_lower:
             raise SystemExit("paks/%s: no such pak under %s" % (rel, args.data))
 
-    report = {"paks": {}, "unused": [], "skipped": {}}
+    report = {"paks": {}, "unused": [], "skipped": {}, "textures_added": {}}
     used = set()
     ref = reference_copies(paks, files)
+    disc_textures = DiscTextures(paks)
     for rel in sorted(paks):
         data = open(paks[rel], "rb").read()
         _, entries, _ = ts2pak.read_pak(data)
@@ -148,6 +219,11 @@ def cmd_build(args):
                 continue
             for n, p in spec.items():
                 (replace if n.lower() in have else add)[n] = open(p, "rb").read()
+        for n, blob in textures_needed(dict(replace, **add), have | {a.lower() for a in add}, files,
+                                       disc_textures).items():
+            add[n] = blob
+            report["textures_added"].setdefault(n, []).append(rel)
+            used.add(n)
         if not replace and not add:
             continue
         used.update(n for n in replace if n in files)

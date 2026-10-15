@@ -134,7 +134,7 @@ What makes it feasible:
 | Write a character's files into every pak that holds them (see below) | TS2 | **Done:** `tools/ts2mod.py build`, checked in Siberia |
 | `.xbt` to and from DDS/PNG | TS2 | **Done:** `tools/ts2xbt.py`, all 19,180 textures round-trip |
 | The whole `.xbr` format from the game's loader: geometry sections, piece-to-bone binding, the 2–3 matrix blend, materials, LODs | TS2 | **Done:** `tools/ts2xbr.py`, `docs/formats/xbr.md`; every character file on the disc rewrites byte for byte |
-| Blender add-on: import `.xbr` and the human skeleton, export back, triangle strips | TS2 | **Done as glTF:** `tools/ts2gltf.py` (`gltf` / `fromgltf`), round-tripped through Blender 5.2; all 314 `chr.pak` models regenerated through glTF drew and animated in an arcade match. A one-click Blender add-on wrapping it is optional |
+| Blender add-on: import `.xbr` and the human skeleton, export back, triangle strips | TS2 | **Done as glTF:** `tools/ts2gltf.py` (`gltf` / `fromgltf`), round-tripped through Blender 5.2; all 314 `chr.pak` models regenerated through glTF drew and animated in an arcade match. The Blender add-on (`tools/blender/ts2_character`) wraps it in File > Import/Export; `graft` combines two characters' pieces, and new textures get ids from 8000 (`docs/formats/xbr.md`, Editing in Blender) |
 | Low-detail models (`chrNNlod2.xbr`) and hat and head attachment points | TS2 | 3–5 days |
 | Checking in game: animation, hit detection, split screen | TS2 | ~5 days |
 | **To add characters:** grow the roster tables in the XBE (model paths, heads, hats, voices, unlocks, bot profiles), character select slots and portraits, unlocks in the save without breaking old saves | TS2 | 3–5 weeks |

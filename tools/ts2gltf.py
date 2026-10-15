@@ -6,6 +6,8 @@ The round trip for editing a character in Blender (docs/formats/xbr.md,
   python3 -I tools/ts2gltf.py gltf     chr01.xbr chr01.glb --textures <unpacked chr.pak> \
                                        --bindpose <unpacked fe_anim.pak>/anim/data/ts2
   python3 -I tools/ts2gltf.py fromgltf chr01.xbr chr01_edited.glb chr01_new.xbr
+  python3 -I tools/ts2gltf.py graft    chr19.xbr chr01.xbr chr19_new.xbr --pieces head \
+                                       --textures <unpacked chr.pak> --bindpose <...>/anim/data/ts2
 
 Export: one armature joint per palette bone (the animation bones, named by
 their animation index and body part, plus the mid-joint bones that type-2
@@ -15,16 +17,23 @@ face lists the game draws, every vertex skinned to the one bone it follows
 (weight 1.0). Textures are embedded as PNG. What glTF cannot express goes in
 `extras`, for reading only.
 
-Import: the base .xbr is the source of truth for everything but geometry.
-Positions, normals, UVs, colours, triangles and their material come from the
-glTF, mapped back to pieces by node (or mesh) name, to bones by joint name
-and to materials by name ("mN_..."). Vertices are snapped to the strongest
+Import: the base .xbr is the source of truth for everything but geometry
+and materials. Positions, normals, UVs, colours, triangles and their material
+come from the glTF, mapped back to pieces by node (or mesh) name ("pNNsS_name";
+by the name when piece NN of the base is another), to bones by joint name.
+A material named "mN_tTTTT" uses texture TTTT; one without an id gets its
+picture encoded as a new .xbt (DXT1, DXT3 with alpha) under a new id in
+8000-9999, or embedded in a chrinc.pak preview. Vertices are snapped to the strongest
 bone the piece can use. A section whose triangles are the base's (within
 float tolerance) is kept as it is in the base, byte for byte, unless
 --regenerate; the others are rebuilt: vertices deduplicated, triangle strips
 (restart flags, no winding flips), records of at most 72 vertices split by
 material, face lists on the last record of each material run, padding
 vertices and draw headers (by ts2xbr.build).
+
+Graft: the pieces of some animation bones (and the joint and bridge pieces
+bound to them) from a donor model onto a base with the same skeleton, each
+donor vertex moved by its bone's bind offset between the two models.
 
 Python 3, standard library only.
 """
@@ -37,6 +46,7 @@ import os
 import re
 import struct
 import sys
+import zlib
 from collections import Counter, defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -384,11 +394,13 @@ def glb_bytes(gl, binary):
             struct.pack("<I4s", len(binary), b"BIN\0") + binary)
 
 
-def texture_png(xbr, mt, textures):
-    """(png bytes, alpha used, format) or None."""
+def texture_png(xbr, mt, textures, extra=None):
+    """(png bytes, alpha used, format) or None. extra: {id: .xbt bytes} looked at first."""
     blob = None
     if mt["flags"] & X.EMBEDDED_FLAG:
         blob = xbr["embedded"][mt["texture"]]
+    elif extra and mt["texture"] in extra:
+        blob = extra[mt["texture"]]
     elif textures and mt["texture"] != X.NO_TEXTURE:
         for p in (os.path.join(textures, "textures", "%04d.xbt" % mt["texture"]),
                   os.path.join(textures, "%04d.xbt" % mt["texture"])):
@@ -425,7 +437,7 @@ def load_bindposes(paths):
     return sorted(out, key=lambda nb: "human" not in nb[0].lower())
 
 
-def export_glb(xbr, name="model", textures=None, bindposes=(), warn=print):
+def export_glb(xbr, name="model", textures=None, bindposes=(), warn=print, extra_textures=None):
     bones = skeleton(xbr)
     world, bp_name = bind_transforms(xbr, bones, list(bindposes), warn)
     pnames = piece_names(xbr, bones)
@@ -441,7 +453,7 @@ def export_glb(xbr, name="model", textures=None, bindposes=(), warn=print):
              "pbrMetallicRoughness": {"metallicFactor": 0.0, "roughnessFactor": 1.0},
              "extras": {"ts2xbr_material": k, "texture": mt["texture"], "flags": mt["flags"],
                         "embedded": bool(mt["flags"] & X.EMBEDDED_FLAG)}}
-        tex = texture_png(xbr, mt, textures)
+        tex = texture_png(xbr, mt, textures, extra_textures or xbr.get("new_textures"))
         if tex:
             png, alpha, _ = tex
             images.append({"name": m["name"], "mimeType": "image/png", "bufferView": g.view(png)})
@@ -647,7 +659,6 @@ def node_worlds(gl):
 
 
 NAME_RE = re.compile(r"^p(\d+)s(\d+)(?:_|$|\.)")
-MAT_RE = re.compile(r"^m(\d+)(?:_|$|\.)")
 
 
 def strip_suffix(name):
@@ -951,20 +962,368 @@ def model_triangles(xbr, nd=None):
 
 
 # --------------------------------------------------------------------------
+# Materials and textures of a written model
+
+# Texture ids for new textures. The PAL disc uses ids 0 to 5293 (4,113 ids
+# in the 68 paks, and every id an .xbr material names is among them), so
+# 8000-9999 is free and keeps the four-digit names. The loader looks a
+# texture up by id in a list it searches, with no table indexed by id
+# (code sub_001B8290), so any id below 0x40000000 would load.
+NEW_TEXTURE_FIRST, NEW_TEXTURE_LAST = 8000, 9999
+CHRINC_LIMIT = 512000          # the front end's per-slot buffer (0x7D000)
+TEX_NAME_RE = re.compile(r"^m(\d+)_t(\d+)$")
+EMB_NAME_RE = re.compile(r"^m(\d+)_emb(\d+)$")
+NONE_NAME_RE = re.compile(r"^m(\d+)_none$")
+INDEX_NAME_RE = re.compile(r"^m(\d+)$")
+
+
+def is_embedded_model(xbr):
+    """A chrinc.pak preview: its materials carry their textures."""
+    return bool(xbr["materials"]) and all(m["flags"] & X.EMBEDDED_FLAG for m in xbr["materials"])
+
+
+def find_xbt(folder, tid):
+    if not folder:
+        return None
+    for p in (os.path.join(folder, "textures", "%04d.xbt" % tid), os.path.join(folder, "%04d.xbt" % tid)):
+        if os.path.exists(p):
+            with open(p, "rb") as f:
+                return f.read()
+    return None
+
+
+def texture_dir_for(output):
+    """Where new textures go: <mod>/files/textures when the output is under a
+    ts2mod files/ folder, else a textures/ folder beside the output."""
+    d = os.path.dirname(os.path.abspath(output))
+    probe = d
+    while True:
+        if os.path.basename(probe).lower() == "files":
+            return os.path.join(probe, "textures")
+        up = os.path.dirname(probe)
+        if up == probe:
+            return os.path.join(d, "textures")
+        probe = up
+
+
+class Materials:
+    """The material list of the model being written. Starts as the base's;
+    materials the new geometry needs are added (a texture id, an embedded
+    .xbt or a new picture), and finish() drops the base's materials that no
+    record uses any more.
+
+    textures: folder of NNNN.xbt (an unpacked chr.pak), for ids that must
+    be embedded (chrinc base) or compared (retexture). counterpart: the
+    chr.pak model of a chrinc base (same material order, measured for all
+    154 pairs), to tell which embedded material a texture id stands for.
+    texture_dir: where new .xbt files would go (to keep ids already used
+    there for other pictures)."""
+
+    def __init__(self, base, textures=None, texture_dir=None, counterpart=None, retexture=False):
+        self.base = base
+        self.embed = is_embedded_model(base)
+        self.mats = [dict(m) for m in base["materials"]]
+        self.embedded = list(base["embedded"])
+        self.base_count = len(self.mats)
+        self.textures = textures
+        self.texture_dir = texture_dir
+        self.counterpart = counterpart
+        self.retexture = retexture
+        self.new_textures = {}           # id -> .xbt bytes, to be written
+        self.notes = []
+        self._gl_cache = {}
+
+    # -- adding
+    def _append(self, mat):
+        for k, m in enumerate(self.mats):
+            if m["texture"] == mat["texture"] and m["flags"] == mat["flags"]:
+                return k
+        self.mats.append(dict(mat, word4=0, word8=0))
+        return len(self.mats) - 1
+
+    def by_blob(self, blob):
+        """An embedded texture (chrinc base)."""
+        for k, m in enumerate(self.mats):
+            if m["flags"] & X.EMBEDDED_FLAG and self.embedded[m["texture"]] == blob:
+                return k
+        self.embedded.append(blob)
+        return self._append({"texture": len(self.embedded) - 1, "flags": X.EMBEDDED_FLAG})
+
+    def by_id(self, tid, flags=0):
+        if self.embed:
+            blob = find_xbt(self.textures, tid) or self.new_textures.get(tid)
+            if blob is None:
+                raise GltfError("texture %04d has to be embedded in this chrinc model: pass --textures "
+                                "<unpacked chr.pak> (or the folder holding %04d.xbt)" % (tid, tid))
+            return self.by_blob(blob)
+        for k, m in enumerate(self.mats):
+            if not m["flags"] & X.EMBEDDED_FLAG and m["texture"] == tid:
+                return k            # keeps that material's flags
+        return self._append({"texture": tid, "flags": flags & ~X.EMBEDDED_FLAG})
+
+    def untextured(self):
+        return self._append({"texture": X.NO_TEXTURE, "flags": X.EMBEDDED_FLAG if self.embed else 0})
+
+    def allocate(self, xbt):
+        """A free id for a new texture: from the picture's CRC within the free
+        range, so the same picture gets the same id again, skipping ids
+        that hold another picture (in texture_dir or --textures)."""
+        span = NEW_TEXTURE_LAST - NEW_TEXTURE_FIRST + 1
+        start = zlib.crc32(xbt) % span
+        for k in range(span):
+            tid = NEW_TEXTURE_FIRST + (start + k) % span
+            if tid in self.new_textures:
+                if self.new_textures[tid] == xbt:
+                    return tid
+                continue
+            have = find_xbt(self.textures, tid)
+            if have is None and self.texture_dir:
+                p = os.path.join(self.texture_dir, "%04d.xbt" % tid)
+                if os.path.exists(p):
+                    with open(p, "rb") as f:
+                        have = f.read()
+            if have is None or have == xbt:
+                self.new_textures[tid] = xbt
+                return tid
+        raise GltfError("no free texture id left in %d-%d" % (NEW_TEXTURE_FIRST, NEW_TEXTURE_LAST))
+
+    def by_xbt(self, xbt):
+        """A new texture: embedded in a chrinc base, else under a new id."""
+        if self.embed:
+            return self.by_blob(xbt)
+        tid = self.allocate(xbt)
+        self.notes.append("new texture %04d.xbt (%d bytes)" % (tid, len(xbt)))
+        return self.by_id(tid)
+
+    def from_model(self, other, k):
+        """Material k of another model (a graft donor)."""
+        if k < 0:
+            return k
+        m = other["materials"][k]
+        if m["flags"] & X.EMBEDDED_FLAG:
+            blob = other["embedded"][m["texture"]]
+            return self.by_blob(blob) if self.embed else self.by_xbt(blob)
+        if m["texture"] == X.NO_TEXTURE:
+            return self.untextured()
+        return self.by_id(m["texture"], m["flags"])
+
+    # -- glTF materials
+    def _image(self, gl, buffers, gm, path):
+        """(width, height, rgba) of a glTF material's base colour image, or None."""
+        ti = (gm.get("pbrMetallicRoughness") or {}).get("baseColorTexture", {}).get("index")
+        if ti is None:
+            return None
+        src = gl["textures"][ti].get("source")
+        if src is None:
+            return None
+        img = gl["images"][src]
+        if "bufferView" in img:
+            bv = gl["bufferViews"][img["bufferView"]]
+            data = buffers[bv["buffer"]][bv.get("byteOffset", 0):bv.get("byteOffset", 0) + bv["byteLength"]]
+        elif img.get("uri", "").startswith("data:"):
+            data = base64.b64decode(img["uri"].split(",", 1)[1])
+        else:
+            with open(os.path.join(os.path.dirname(os.path.abspath(path)), img["uri"]), "rb") as f:
+                data = f.read()
+        if data[:8] != b"\x89PNG\r\n\x1a\n":
+            raise GltfError("material '%s': its image is not a PNG (export the .glb with images as PNG)"
+                            % gm.get("name"))
+        return ts2xbt.read_png(bytes(data))
+
+    def _same_picture(self, img, xbt):
+        try:
+            t = ts2xbt.Xbt(xbt)
+        except ts2xbt.XbtError:
+            return False
+        w, h, _ = t.sizes[0]
+        if (w, h) != img[:2]:
+            return False
+        a = ts2xbt.decode_level(t, 0)
+        b = img[2]
+        return max(abs(a[i] - b[i]) for i in range(len(a))) <= 2
+
+    def _changed(self, img, tid=None, blob=None):
+        """--retexture: the glTF's picture is not the texture's."""
+        if not self.retexture or img is None:
+            return False
+        if blob is None:
+            blob = find_xbt(self.textures, tid)
+        return blob is None or not self._same_picture(img, blob)
+
+    def resolve(self, gl, buffers, gi, path):
+        """Output material index of glTF material gi."""
+        if gi in self._gl_cache:
+            return self._gl_cache[gi]
+        gm = gl["materials"][gi]
+        name = strip_suffix(gm.get("name", ""))
+        img = self._image(gl, buffers, gm, path)
+        nb = self.base_count
+        bm = self.base["materials"]
+        k = None
+        m = TEX_NAME_RE.match(name)
+        if m:
+            n, tid = int(m.group(1)), int(m.group(2))
+            if self.embed:
+                k = self._embedded_for(n, tid, img)
+            elif n < nb and bm[n]["texture"] == tid and not bm[n]["flags"] & X.EMBEDDED_FLAG \
+                    and not self._changed(img, tid):
+                k = n
+            elif not self._changed(img, tid):
+                k = self.by_id(tid)
+        m = EMB_NAME_RE.match(name)
+        if m and k is None:
+            n, e = int(m.group(1)), int(m.group(2))
+            if self.embed and n < nb and bm[n]["texture"] == e and not self._changed(img, blob=self.embedded[e]):
+                k = n
+        m = NONE_NAME_RE.match(name)
+        if m and k is None:
+            n = int(m.group(1))
+            k = n if n < nb and bm[n]["texture"] == X.NO_TEXTURE else self.untextured()
+        m = INDEX_NAME_RE.match(name)
+        if m and k is None and int(m.group(1)) < nb:
+            k = int(m.group(1))
+        if k is None:
+            if img is None:
+                self.notes.append("material '%s' has no texture id in its name (mN_tNNNN) and no image: "
+                                  "drawn untextured" % gm.get("name"))
+                k = self.untextured()
+            else:
+                k = self.by_xbt(ts2xbt.new_xbt(img[2], img[0], img[1]))
+                self.notes.append("material '%s': its %dx%d image became material %d" % (gm.get("name"), img[0], img[1], k))
+        self._gl_cache[gi] = k
+        return k
+
+    def _embedded_for(self, n, tid, img):
+        """Material for 'mN_tTTTT' over a chrinc base."""
+        bm = self.base["materials"]
+        if self.counterpart is not None:
+            cm = self.counterpart["materials"]
+            same = [q for q in range(min(len(cm), len(bm))) if cm[q]["texture"] == tid]
+            if same and not self._changed(img, blob=self.embedded[bm[same[0]]["texture"]]):
+                return same[0]
+            if self._changed(img, tid):
+                return None
+            return self.by_id(tid)
+        if n < len(bm) and not self.retexture:
+            self.notes.append("material m%d_t%04d mapped to the chrinc model's material %d by index (no chr.pak "
+                              "counterpart found; pass --textures <unpacked chr.pak>)" % (n, tid, n))
+            return n
+        return None if self._changed(img, tid) else self.by_id(tid)
+
+    # -- the final list
+    def finish(self, pieces):
+        """Drops base materials no record uses any more (and their embedded
+        textures), keeps the rest in order; returns (materials, embedded,
+        pieces with records renumbered)."""
+        used = {r["material"] for p in pieces for sec in p["sections"] if sec for r in sec["records"]}
+        base_used = {r["material"] for p in self.base["pieces"] for sec in p["sections"] if sec
+                     for r in sec["records"]}
+        keep = [k for k in range(len(self.mats)) if k in used or (k < self.base_count and k not in base_used)]
+        if len(keep) == len(self.mats):
+            remap = None
+        else:
+            remap = {k: q for q, k in enumerate(keep)}
+            remap[-1] = -1
+            dropped = [k for k in range(self.base_count) if k not in remap]
+            if dropped:
+                self.notes.append("base materials no longer used, dropped: %s" % ", ".join(
+                    material_name(k, self.base["materials"][k]) for k in dropped))
+        mats = [dict(self.mats[k]) for k in keep]
+        emb_used = sorted({m["texture"] for m in mats if m["flags"] & X.EMBEDDED_FLAG})
+        embedded = [self.embedded[e] for e in emb_used]
+        emap = {e: q for q, e in enumerate(emb_used)}
+        for m in mats:
+            if m["flags"] & X.EMBEDDED_FLAG:
+                m["texture"] = emap[m["texture"]]
+        if remap:
+            out = []
+            for p in pieces:
+                np_ = dict(p)
+                np_["sections"] = [dict(sec, records=[dict(r, material=remap[r["material"]]) for r in sec["records"]])
+                                   if sec else None for sec in p["sections"]]
+                out.append(np_)
+            pieces = out
+        return mats, embedded, pieces
+
+
+def write_textures(new_textures, texture_dir):
+    """Writes the new .xbt files; returns their paths."""
+    out = []
+    if new_textures:
+        os.makedirs(texture_dir, exist_ok=True)
+    for tid, blob in sorted(new_textures.items()):
+        p = os.path.join(texture_dir, "%04d.xbt" % tid)
+        with open(p, "wb") as f:
+            f.write(blob)
+        out.append(p)
+    return out
+
+
+def finish_model(base, pieces, model, mt):
+    """The new model dict, with materials pruned and the chrinc size checked."""
+    mats, embedded, pieces = mt.finish(pieces)
+    new = {"materials": mats, "model": model, "embedded": embedded, "pieces": pieces,
+           "new_textures": dict(mt.new_textures)}
+    return new
+
+
+def check_size(data, xbr):
+    if is_embedded_model(xbr) and len(data) > CHRINC_LIMIT:
+        sizes = ", ".join("%d" % len(b) for b in xbr["embedded"])
+        raise GltfError("the chrinc model is %d bytes, over the front end's %d-byte buffer (embedded "
+                        "textures: %s bytes); use smaller pictures or fewer materials"
+                        % (len(data), CHRINC_LIMIT, sizes))
+
+
+# --------------------------------------------------------------------------
 # Import
 
 
-def import_glb(base, path, regenerate=False):
-    """Returns (new xbr dict, report lines, stats dict)."""
+def piece_lookup(base, bones):
+    """Maps a glTF object name to (piece, section) of the base: by pNN when
+    the base's piece NN has the name after pNNsS_, else by that name (so
+    objects from another model's export land on the matching piece)."""
+    pnames = piece_names(base, bones)
+
+    def lookup(name, report):
+        nm = strip_suffix(name)
+        m = NAME_RE.match(nm)
+        if not m:
+            return None
+        pi, s = int(m.group(1)), int(m.group(2))
+        suffix = nm[m.end():] if nm[m.end() - 1:m.end()] == "_" else ""
+        if not suffix or (pi < len(pnames) and pnames[pi] == suffix):
+            return pi, s
+        if suffix in pnames:
+            k = pnames.index(suffix)
+            report.append("object '%s': piece %d of the base is '%s'; placed on piece %d ('%s')"
+                          % (name, pi, pnames[pi] if pi < len(pnames) else "-", k, suffix))
+            return k, s
+        if suffix in HUMAN19_NAMES or any(suffix.startswith(a) for a in ("joint_", "bridge_", "mid_")):
+            raise GltfError("object '%s': the base model has no piece '%s' (use `ts2gltf.py graft`, which "
+                            "adds the joint pieces a donor brings)" % (name, suffix))
+        return pi, s
+    return lookup
+
+
+def import_glb(base, path, regenerate=False, bindposes=(), materials=None):
+    """Returns (new xbr dict, report lines, stats dict). The new model's
+    "new_textures" holds {id: .xbt bytes} for pictures that need a new id.
+    bindposes: when given, every skinned vertex is placed by its bone's bind
+    transform in the base (so pieces exported from another model of another
+    scale land at this model's joints)."""
     gl, buffers = read_gltf(path)
     P = base["pieces"]
     bones = skeleton(base)
-    world_bind, _ = bind_transforms(base, bones, [], lambda m: None)
+    world_bind, bp_name = bind_transforms(base, bones, list(bindposes), lambda m: None)
+    bind_mats = [trs_mat(t, q) for t, q in world_bind] if bp_name else None
     name_to_bone = {b["name"]: k for k, b in enumerate(bones)}
     nodes = gl.get("nodes", [])
     worlds = node_worlds(gl)
     report = []
     stats = Counter()
+    mt = materials or Materials(base)
+    lookup = piece_lookup(base, bones)
 
     def joint_palette(node_index):
         nm = nodes[node_index].get("name", "")
@@ -974,28 +1333,40 @@ def import_glb(base, path, regenerate=False):
         ex = nodes[node_index].get("extras") or {}
         if isinstance(ex.get("ts2xbr_bone"), int) and 0 <= ex["ts2xbr_bone"] < len(bones):
             return ex["ts2xbr_bone"]
-        raise GltfError("joint '%s' is not a bone of the base model (names: %s ...)"
-                        % (nm, ", ".join(b["name"] for b in bones[:4])))
+        return None     # a bone the base lacks (another model's mid-joint): only an error if a vertex uses it
 
     skins = []
     for sk in gl.get("skins", []):
         joints = sk["joints"]
         ibm = (read_accessor(gl, buffers, sk["inverseBindMatrices"]) if "inverseBindMatrices" in sk
                else [to_colmajor(ident())] * len(joints))
-        mats = [mmul(worlds[j], from_colmajor(m)) for j, m in zip(joints, ibm)]
-        skins.append({"palette": [joint_palette(j) for j in joints], "mats": mats,
-                      "ident": [near_identity(m) for m in mats]})
+        palette = [joint_palette(j) for j in joints]
+        # with a bind pose: the bone's bind in the base, not the joint's place
+        # in the glTF, so a piece from another model's skeleton lands at this
+        # model's joint
+        mats = [mmul(bind_mats[b] if bind_mats and b is not None else worlds[j], from_colmajor(m))
+                for b, j, m in zip(palette, joints, ibm)]
+        skins.append({"palette": palette, "mats": mats, "ident": [near_identity(m) for m in mats],
+                      "names": [nodes[j].get("name", "") for j in joints],
+                      "at": {b: tuple(worlds[j][r][3] for r in range(3)) for b, j in zip(palette, joints)
+                             if b is not None}})
+    if not bind_mats and len(skins) > 1:
+        far = max((max(abs(a - c) for a, c in zip(sa["at"][b], sb["at"][b]))
+                   for sa in skins for sb in skins for b in sa["at"] if b in sb["at"]), default=0.0)
+        if far > 1e-3:
+            report.append("warning: the glTF's armatures put the same bone up to %.3f apart; pass --bindpose so "
+                          "pieces from another model are placed at this model's joints" % far)
 
     collected = defaultdict(list)    # (piece, section) -> [(material, (v, v, v))]
     for ni, node in enumerate(nodes):
         if "mesh" not in node:
             continue
         mesh = gl["meshes"][node["mesh"]]
-        m = NAME_RE.match(node.get("name", "")) or NAME_RE.match(mesh.get("name", ""))
-        if not m:
+        found = lookup(node.get("name", ""), report) or lookup(mesh.get("name", ""), report)
+        if not found:
             report.append("skipped object '%s': its name does not start with pNNsS" % node.get("name"))
             continue
-        pi, s = int(m.group(1)), int(m.group(2))
+        pi, s = found
         if pi >= len(P) or s > 1:
             raise GltfError("object '%s' names piece %d section %d; the base has %d pieces and sections 0-1"
                             % (node.get("name"), pi, s, len(P)))
@@ -1030,14 +1401,7 @@ def import_glb(base, path, regenerate=False):
                 sets.append((read_accessor(gl, buffers, at["JOINTS_%d" % q]),
                              read_accessor(gl, buffers, at["WEIGHTS_%d" % q])))
                 q += 1
-            if "material" in prim:
-                mname = gl["materials"][prim["material"]].get("name", "")
-                mm = MAT_RE.match(mname)
-                if not mm or int(mm.group(1)) >= len(base["materials"]):
-                    raise GltfError("material '%s' is not one of the base's (m0 .. m%d)" % (mname, len(base["materials"]) - 1))
-                mat = int(mm.group(1))
-            else:
-                mat = -1
+            mat = mt.resolve(gl, buffers, prim["material"], path) if "material" in prim else -1
             idx = read_accessor(gl, buffers, prim["indices"]) if "indices" in prim else [(k,) for k in range(nv)]
             idx = [r[0] for r in idx]
             verts = []
@@ -1048,6 +1412,9 @@ def import_glb(base, path, regenerate=False):
                     for js, ws in sets:
                         for j, w in zip(js[k], ws[k]):
                             if w > 0:
+                                if skin["palette"][int(j)] is None:
+                                    raise GltfError("object '%s' is weighted to joint '%s', which is not a bone of "
+                                                    "the base model" % (node.get("name"), skin["names"][int(j)]))
                                 weights[skin["palette"][int(j)]] += w
                                 mats.append((w, int(j)))
                 p = pos[k]
@@ -1094,8 +1461,7 @@ def import_glb(base, path, regenerate=False):
                 collected[(pi, s)].append((mat, (verts[idx[t]], verts[idx[t + 1]], verts[idx[t + 2]])))
             stats["vertices_in"] += nv
 
-    new = {"materials": base["materials"], "model": base["model"], "embedded": base["embedded"],
-           "pieces": []}
+    pieces = []
     for i, p in enumerate(P):
         np_ = dict(p)
         np_["sections"] = list(p["sections"])
@@ -1146,7 +1512,244 @@ def import_glb(base, path, regenerate=False):
                               % (label, ntris, len(vdata), nverts, len(sec["records"]), bv))
                 report += lines
                 stats["sections_rebuilt"] += 1
-        new["pieces"].append(np_)
+        pieces.append(np_)
+    new = finish_model(base, pieces, base["model"], mt)
+    report += mt.notes
+    return new, report, stats
+
+
+# --------------------------------------------------------------------------
+# Graft: pieces of one model onto another
+
+
+def anim_bones_named(xbr, spec):
+    """Animation bones from a comma-separated list: 'head', 'b04_head' or '4'."""
+    bones = [b for b in skeleton(xbr) if b["kind"] == "anim"]
+    out = []
+    for tok in (t.strip() for t in spec.split(",")):
+        if not tok:
+            continue
+        k = int(tok) if tok.isdigit() else next((b["anim"] for b in bones if tok in (b["name"], b["short"])), None)
+        if k is None or not 0 <= k < len(bones):
+            raise GltfError("'%s' is not an animation bone of the model (%s)"
+                            % (tok, ", ".join(b["short"] for b in sorted(bones, key=lambda b: b["anim"]))))
+        if k not in out:
+            out.append(k)
+    return out
+
+
+def connectors(pieces, rigid):
+    """Pieces of types 1-3 bound to one of the given pieces (as c64 or c68)."""
+    return [i for i, p in enumerate(pieces) if p["type"] != 0 and (p["parent"] in rigid or p["child"] in rigid)]
+
+
+def _new_piece(ptype, parent, child, blend_bits):
+    return {"type": ptype, "bone": -1, "parent": parent, "child": child, "sibling": -1, "prev": -1,
+            "pad": [0, 0], "mask": 0, "state": [0, 0, 0, 0], "blend_bits": blend_bits,
+            "stat_verts": 0, "stat_tris": 0, "sections": [None] * X.SECTIONS}
+
+
+def insert_between(P, a, b, ptype, blend_bits):
+    """A joint piece between piece a and its tree child b: it takes b's place
+    in a's child list and b becomes its child. Returns its index."""
+    j = len(P)
+    q = _new_piece(ptype, a, b, blend_bits)
+    q["sibling"], q["prev"] = P[b]["sibling"], P[b]["prev"]
+    P.append(q)
+    if P[a]["child"] == b:
+        P[a]["child"] = j
+    elif q["prev"] >= 0:
+        P[q["prev"]]["sibling"] = j
+    if q["sibling"] >= 0:
+        P[q["sibling"]]["prev"] = j
+    P[b]["parent"], P[b]["sibling"], P[b]["prev"] = j, -1, -1
+    return j
+
+
+def append_bridge(P, a, b):
+    """A bridge piece (type 3) from a to b, last in a's child list."""
+    j = len(P)
+    q = _new_piece(3, a, b, ONE_F)
+    P.append(q)
+    if P[a]["child"] < 0:
+        P[a]["child"] = j
+    else:
+        last = P[a]["child"]
+        while P[last]["sibling"] >= 0:
+            last = P[last]["sibling"]
+        P[last]["sibling"] = j
+        q["prev"] = last
+    return j
+
+
+def graft(base, donor, anim_bones, bindposes=(), materials=None):
+    """The base model with the pieces of the given animation bones, and the
+    joint and bridge pieces bound to them, taken from the donor. The two
+    must share their animation skeleton. Joint pieces the base lacks are
+    added to its tree (a mid-joint gets a new palette bone). With a bind
+    pose, each donor vertex keeps its place relative to its bone and is
+    moved to that bone's bind in the base (the models have different
+    skeleton scales). Returns (new xbr dict, report lines, stats)."""
+    sk_b, sk_d = X.rigid_skeleton(base), X.rigid_skeleton(donor)
+    if [pa for _, pa in sk_b] != [pa for _, pa in sk_d]:
+        raise GltfError("the models have different skeletons (%d and %d animation bones)" % (len(sk_b), len(sk_d)))
+    report, stats = [], Counter()
+    mt = materials or Materials(base)
+    bones_b, bones_d = skeleton(base), skeleton(donor)
+    names_d = piece_names(donor, bones_d)
+    D = donor["pieces"]
+    P = [dict(p, sections=list(p["sections"])) for p in base["pieces"]]
+    model = dict(base["model"])
+    anim_d = {pi: k for k, (pi, _) in enumerate(sk_d)}
+    sel_d = {sk_d[k][0] for k in anim_bones}
+    sel_b = {sk_b[k][0] for k in anim_bones}
+    clear = sel_b | set(connectors(base["pieces"], sel_b))
+    target = {sk_d[k][0]: sk_b[k][0] for k in anim_bones}
+    linked = {}
+
+    def base_piece(di):
+        if di < 0:
+            return None
+        if di in target:
+            return target[di]
+        if di in linked:
+            return linked[di]
+        p = D[di]
+        if p["type"] == 0:
+            return sk_b[anim_d[di]][0]
+        if p["type"] == 2:      # a mid-joint at the end of a bridge: the base's, made one if need be
+            a, b = base_piece(p["parent"]), base_piece(p["child"])
+            if a is None or b is None:
+                return None
+            j = between(a, b, p, names_d[di])
+            if j is not None:
+                linked[di] = j       # its bone and place only; its geometry stays the base's
+            return j
+        return None
+
+    def between(a, b, c, label):
+        """The base's joint piece from a to its child b for donor piece c
+        (type 1 or 2): found, made a mid-joint, or added. None if b is not a's child."""
+        j = next((j for j, q in enumerate(P) if q["type"] in (1, 2) and (q["parent"], q["child"]) == (a, b)), None)
+        if j is None:
+            if P[b]["parent"] != a:
+                return None
+            j = insert_between(P, a, b, c["type"], c["blend_bits"] if c["type"] == 2 else ONE_F)
+            if c["type"] == 2:
+                P[j]["bone"] = new_bone()
+            report.append("added piece %d (%s) between pieces %d and %d" % (j, label, a, b))
+        elif c["type"] == 2 and P[j]["type"] == 1:
+            P[j].update(type=2, bone=new_bone(), blend_bits=c["blend_bits"])
+            report.append("piece %d made a mid-joint (%s), with new palette bone %d" % (j, label, P[j]["bone"]))
+        return j
+
+    def new_bone():
+        model["bone_count"] += 1
+        if model["bone_count"] > 127:
+            raise GltfError("more than 127 palette bones")
+        return model["bone_count"] - 1
+
+    taken = set()
+    for di in sorted(connectors(D, sel_d), key=lambda i: D[i]["type"] == 3):
+        c = D[di]
+        a, b = base_piece(c["parent"]), base_piece(c["child"])
+        if a is None or b is None:
+            report.append("donor piece %d (%s): the base has no piece at one of its ends; left out" % (di, names_d[di]))
+            continue
+        if c["type"] in (1, 2):
+            j = between(a, b, c, names_d[di])
+            if j is None:
+                report.append("donor piece %d (%s): no place for it in the base's tree; left out" % (di, names_d[di]))
+                continue
+        else:
+            j = next((j for j, q in enumerate(P) if q["type"] == 3 and (q["parent"], q["child"]) == (a, b)
+                      and j not in taken), None)
+            if j is None:
+                j = append_bridge(P, a, b)
+                report.append("added piece %d (%s)" % (j, names_d[di]))
+        taken.add(j)
+        target[di] = j
+    if len(P) > 127:
+        raise GltfError("more than 127 pieces")
+
+    def map_bone(bd):
+        j = base_piece(bones_d[bd]["piece"])
+        return P[j]["bone"] if j is not None and P[j]["bone"] >= 0 else None
+    for di, j in target.items():          # a bridge's own bone
+        if D[di]["type"] == 3:
+            P[j]["bone"] = map_bone(D[di]["bone"]) if D[di]["bone"] >= 0 else -1
+            if P[j]["bone"] is None:
+                P[j]["bone"] = -1
+    nb_old = base["model"]["bone_count"]
+
+    # bind transforms: donor bone -> base bone
+    wb, bpb = bind_transforms(base, bones_b, list(bindposes), lambda m: None)
+    wd, bpd = bind_transforms(donor, bones_d, list(bindposes), lambda m: None)
+    sb, sd = float_of(base["model"]["scale_bits"]) or 1.0, float_of(donor["model"]["scale_bits"]) or 1.0
+    if not (bpb and bpd) and abs(sb - sd) > 1e-6:
+        report.append("warning: skeleton scales differ (base %.3g, donor %.3g) and there is no --bindpose: the "
+                      "donor's pieces stay where they were in the donor" % (sb, sd))
+
+    def bind_b(bb):
+        if bb < nb_old:
+            return wb[bb]
+        j = next(i for i, q in enumerate(P) if q["bone"] == bb and q["type"] == 2)
+        return wb[P[P[j]["child"]]["bone"]]       # a mid bone binds at its c68 bone
+    xf_cache = {}
+
+    def xf(bd, bb):
+        if not (bpb and bpd):
+            return None
+        if (bd, bb) not in xf_cache:
+            m = mmul(trs_mat(*bind_b(bb)), rigid_inverse(*wd[bd]))
+            xf_cache[(bd, bb)] = None if near_identity(m) else m
+        return xf_cache[(bd, bb)]
+
+    for i in clear:
+        P[i]["sections"] = [None] * X.SECTIONS
+    view = {"pieces": P}
+    for di, j in sorted(target.items(), key=lambda t: t[1]):
+        own, allowed = piece_bone_sets(view, j)
+        for s in range(X.SECTIONS):
+            dsec = D[di]["sections"][s]
+            if not dsec:
+                P[j]["sections"][s] = None
+                continue
+            vid, vdata, tris = {}, [], []
+            for mat, tri in base_section_corners(D[di], dsec):
+                ids = []
+                for v in tri:
+                    bd = v[9]
+                    bb = map_bone(bd)
+                    if P[j]["type"] == 0:
+                        bb2 = own
+                    elif bb in allowed:
+                        bb2 = bb
+                    else:
+                        bb2 = min(allowed, key=lambda q: sum((v[r] - bind_b(q)[0][r]) ** 2 for r in range(3)))
+                        stats["snapped"] += 1
+                    m = xf(bd, bb if bb is not None else bb2)
+                    p, n = (v[:3], v[3:6]) if m is None else (xform(m, v[:3]), normalize3(xform(m, v[3:6], 0.0)))
+                    w = (f32(p[0]), f32(p[1]), f32(p[2]), f32(n[0]), f32(n[1]), f32(n[2]), v[6], v[7], v[8], bb2)
+                    if w not in vid:
+                        vid[w] = len(vdata)
+                        vdata.append(w)
+                    ids.append(vid[w])
+                tris.append((mt.from_model(donor, mat), tuple(ids)))
+            template = {"has_col": dsec["has_col"],
+                        "records": [{"material": mt.from_model(donor, r["material"]), "kind": r["kind"]}
+                                    for r in dsec["records"]]}
+            lines = []
+            sec = build_section(tris, vdata, template, P[j], lines)
+            P[j]["sections"][s] = sec
+            if sec:
+                report.append("piece %d section %d (%s) from donor piece %d: %d triangles"
+                              % (j, s, names_d[di], di, sum(len(r["faces"]) // 3 for r in sec["records"] if r["faces"])))
+    cleared = sorted(i for i in clear if i not in target.values() and any(base["pieces"][i]["sections"]))
+    if cleared:
+        report.append("base pieces emptied (the donor has none there): %s" % ", ".join(map(str, cleared)))
+    new = finish_model(base, P, model, mt)
+    report += mt.notes
     return new, report, stats
 
 
@@ -1164,22 +1767,82 @@ def cmd_gltf(args):
     print("%s -> %s: %d bytes" % (args.input, args.output, len(out)))
 
 
-def cmd_fromgltf(args):
-    data, base = X.load(args.base)
-    new, report, stats = import_glb(base, args.gltf, regenerate=args.regenerate)
+def materials_for(args, base_path, base, output):
+    tex_dir = args.texture_dir or texture_dir_for(output)
+    counterpart = None
+    if is_embedded_model(base) and args.textures:
+        for p in (os.path.join(args.textures, "ob", "chrs", os.path.basename(base_path)),
+                  os.path.join(args.textures, os.path.basename(base_path))):
+            if os.path.exists(p) and os.path.abspath(p) != os.path.abspath(base_path):
+                _, cp = X.load(p)
+                if not is_embedded_model(cp):
+                    counterpart = cp
+                    break
+    return Materials(base, textures=args.textures, texture_dir=tex_dir, counterpart=counterpart,
+                     retexture=getattr(args, "retexture", False)), tex_dir
+
+
+def write_model(new, output, tex_dir):
+    """Builds, checks (parse, rebuild, chrinc size) and writes the model and
+    its new textures. Returns (bytes, texture paths)."""
     out = X.build(new)
-    X.parse(out)                     # what was written must read back
     if X.build(X.parse(out)) != out:
         raise GltfError("the written file does not rebuild identically")
-    with open(args.output, "wb") as f:
+    check_size(out, new)
+    os.makedirs(os.path.dirname(os.path.abspath(output)), exist_ok=True)
+    with open(output, "wb") as f:
         f.write(out)
+    return out, write_textures(new.get("new_textures", {}), tex_dir)
+
+
+def cmd_fromgltf(args):
+    data, base = X.load(args.base)
+    mt, tex_dir = materials_for(args, args.base, base, args.output)
+    new, report, stats = import_glb(base, args.gltf, regenerate=args.regenerate,
+                                    bindposes=load_bindposes(args.bindpose), materials=mt)
+    out, written = write_model(new, args.output, tex_dir)
     for line in report:
         print(line)
-    print("%s: %d bytes; %d sections kept from the base, %d rebuilt, %d removed; %d vertices read, "
+    for p in written:
+        print("wrote " + p)
+    print("%s: %d bytes, %d materials; %d sections kept from the base, %d rebuilt, %d removed; %d vertices read, "
           "%d snapped to a bone other than their strongest, %d unweighted%s"
-          % (args.output, len(out), stats["sections_kept"], stats["sections_rebuilt"], stats["sections_removed"],
-             stats["vertices_in"], stats["snapped"], stats["unweighted"],
+          % (args.output, len(out), len(new["materials"]), stats["sections_kept"], stats["sections_rebuilt"],
+             stats["sections_removed"], stats["vertices_in"], stats["snapped"], stats["unweighted"],
              ", identical to the base" if out == data else ""))
+
+
+def cmd_graft(args):
+    _, base = X.load(args.base)
+    _, donor = X.load(args.donor)
+    glb = args.output.lower().endswith(".glb")
+    xbr_out = os.path.splitext(args.output)[0] + ".xbr" if glb else args.output
+    mt, tex_dir = materials_for(args, args.base, base, xbr_out)
+    bps = load_bindposes(args.bindpose)
+    new, report, stats = graft(base, donor, anim_bones_named(donor, args.pieces), bps, mt)
+    out, written = write_model(new, xbr_out, tex_dir)
+    for line in report:
+        print(line)
+    for p in written:
+        print("wrote " + p)
+    print("%s: %d bytes, %d pieces, %d palette bones, %d materials; %d donor vertices moved to another bone"
+          % (xbr_out, len(out), len(new["pieces"]), new["model"]["bone_count"], len(new["materials"]),
+             stats["snapped"]))
+    if glb:
+        g = export_glb(X.parse(out), os.path.splitext(os.path.basename(args.output))[0], args.textures, bps,
+                       warn=lambda m: print("warning: " + m), extra_textures=new["new_textures"])
+        with open(args.output, "wb") as f:
+            f.write(g)
+        print("%s: %d bytes (import edits of it with fromgltf over %s)" % (args.output, len(g), xbr_out))
+
+
+def texture_args(p):
+    p.add_argument("--textures", help="folder with textures/NNNN.xbt (an unpacked chr.pak): textures to embed in a "
+                   "chrinc model, pictures to compare, and the chr.pak counterpart of a chrinc model")
+    p.add_argument("--texture-dir", help="where new NNNN.xbt files go (default: <mod>/files/textures when the "
+                   "output is under a files/ folder, else textures/ beside the output)")
+    p.add_argument("--bindpose", action="append",
+                   help="bind poses (as for gltf): place pieces from another model's skeleton at this model's joints")
 
 
 def main():
@@ -1198,7 +1861,17 @@ def main():
     p.add_argument("output")
     p.add_argument("--regenerate", action="store_true",
                    help="rebuild every section, even those whose triangles are the base's")
+    p.add_argument("--retexture", action="store_true",
+                   help="a material named after a texture id whose image differs from that texture gets a new texture")
+    texture_args(p)
     p.set_defaults(fn=cmd_fromgltf)
+    p = sub.add_parser("graft", help="the pieces of some bones (and their joints) from a donor model onto a base")
+    p.add_argument("base")
+    p.add_argument("donor")
+    p.add_argument("output", help=".xbr, or .glb (then the .xbr is written beside it)")
+    p.add_argument("--pieces", required=True, help="animation bones, comma-separated: head, b04_head or 4")
+    texture_args(p)
+    p.set_defaults(fn=cmd_graft)
     args = ap.parse_args()
     try:
         return args.fn(args) or 0

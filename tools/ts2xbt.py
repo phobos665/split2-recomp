@@ -683,6 +683,27 @@ def import_image(orig, src_bytes, kind):
     return hd.rebuilt(w, h, total) + b"".join(native), notes
 
 
+def new_xbt(rgba, width, height, fmt=None):
+    """A new .xbt from an RGBA picture, with no original to copy: DXT1, or
+    DXT3 when any texel's alpha is under 255; the whole mip chain (box
+    filter); no detail texture; display size = texture size. These are the
+    commonest header values on the disc (docs/formats/xbt.md)."""
+    if not (is_pow2(width) and is_pow2(height)):
+        raise XbtError("%dx%d: an .xbt's sides must be powers of two" % (width, height))
+    if fmt is None:
+        fmt = FMT_DXT3 if min(rgba[3::4]) < 255 else FMT_DXT1
+    total = full_levels(width, height)
+    hdr = bytearray(HEADER_SIZE)
+    struct.pack_into("<6Ii2f", hdr, 0, width, height, width, height, total - 1, fmt, -1, 0.0, 0.0)
+    out = [bytes(hdr), encode_level(rgba, width, height, fmt)]
+    w, h = width, height
+    for _ in range(total - 1):
+        rgba = downsample(rgba, w, h)
+        w, h = max(1, w // 2), max(1, h // 2)
+        out.append(encode_level(rgba, w, h, fmt))
+    return b"".join(out)
+
+
 def kind_of(path):
     ext = os.path.splitext(path)[1].lower()
     if ext not in (".dds", ".png"):
