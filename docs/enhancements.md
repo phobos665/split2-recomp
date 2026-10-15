@@ -138,7 +138,8 @@ What makes it feasible:
 | Low-detail models (`chrNNlod2.xbr`) and hat and head attachment points | TS2 | 3–5 days |
 | Checking in game: animation, hit detection, split screen | TS2 | ~5 days |
 | **A character in the spare roster slot**, declared by a mod (`ts2/characters.ini`): name, portrait, description, unlock, stats and voice | TS2 | **Done (PAL):** Agent Static (chr id 70) on Select Character, in matches, in the bot list and the Gallery (15 columns); `docs/formats/roster.md`, "Adding a character (mods)" |
-| **To add characters beyond the spare slot:** grow the roster tables in the XBE (model paths, heads, hats, voices, unlocks, bot profiles), character select slots and portraits, unlocks in the save without breaking old saves | TS2 | 3–5 weeks |
+| **Characters added, not swapped:** the roster grown in the XBE before the lift (xboxrecomp XBE patches; `config/pal/xbe_patches.json`): 32 hidden spare slots, the unlock snapshot and the portraits' texture list with them, 78 code sites repointed; `slot = next` in `ts2/characters.ini`, and `tools/ts2kitbash.py` writes that file from its recipe | TS2 | **Done (PAL):** Agent Static, The Bone Ranger and Monkey Business added beside all 126 characters: Select Character, a match each, the Gallery (15 columns); no mod, no change (frame dumps against the unpatched build); `docs/formats/roster.md`, "Room for more characters" |
+| More than 35 new characters (new chr ids: the definition, flags and object tables grow too), new characters in story levels | TS2 | 2–3 weeks |
 | **To add characters:** System Link refuses players whose mods differ | Toolkit | 2–3 days |
 
 First milestone (about 2.5 weeks): the first four steps, ending in a

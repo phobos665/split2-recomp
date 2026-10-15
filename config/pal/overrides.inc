@@ -104,11 +104,24 @@ extern void sub_00099960_gen(void);
 void sub_00099960(void) { ts2_gallery_build(sub_00099960_gen); }
 extern void sub_00098F40_gen(void);
 void sub_00098F40(void) { ts2_gallery_draw(sub_00098F40_gen); }
+/* sub_0008FAE0 draws a Select Character item, finding its portrait by chr
+ * id among the roster's first 127 entries: the one search the XBE patches
+ * cannot widen (its bound is an imm8). */
+extern void sub_0008FAE0_gen(void);
+void sub_0008FAE0(void) { ts2_chars_item_draw(sub_0008FAE0_gen); }
 
+/* The roster and the texture list are where config/pal/xbe_patches.json
+ * moved them: the section TS2ROSTER at 0x004CE000 (the roster, 127 + 32
+ * entries, at +0; the texture list, 548 + 32 entries from 0x004CF800, whose
+ * paths are at +8). That file is applied by every PAL lift (scripts/build.py),
+ * and src/recomp/ts2_region.h says so. */
+#ifndef TS2_XBE_PATCHES_SHA1
+#  error "the PAL release is lifted with config/pal/xbe_patches.json; lift again with scripts/build.py --relift"
+#endif
 const Ts2Roster k_ts2_roster = {
-    0x002BAC60, 127,      /* roster */
+    0x004CE000, 159, 127, 127,  /* roster: slots, the first spare one, sub_0008FAE0's reach */
     0x002AA060, 162,      /* character definitions */
-    0x002BF7B8, 548,      /* texture list */
+    0x004CF808, 580,      /* texture list (the paths), with the spare slots' portraits */
     470, 12,              /* chrblank_atom .. chrblank_west */
     0x003362F0, 5, 2770,  /* string tables: English, French, German, Italian, Spanish */
     0x0035C80C, 0x0035F4A4, 0x00222534,  /* Gallery: columns, rows, cell scale */

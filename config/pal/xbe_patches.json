@@ -1,0 +1,666 @@
+{
+ "format": 1,
+ "xbe_sha1": "2809eb147385723eaa90c425be89ee4db033fc5a",
+ "comment": "TimeSplitters 2 PAL: the character roster with 32 spare slots (127-158), for characters a mod adds (ts2/characters.ini). Written by tools/ts2_roster_patches.py; docs/formats/roster.md, 'Room for more characters', says why each site changes. sub_0008FAE0's search (0x0008FB6E) keeps its 127: recomp_manual.c covers it.",
+ "operations": [
+  {
+   "op": "add_section",
+   "name": "TS2ROSTER",
+   "size": "0x4000",
+   "va": "0x004CE000",
+   "why": "the roster with 32 spare slots (159 entries and a sentinel) at +0, its unlock snapshot at +0x1400, the texture list with 32 more entries at +0x1800"
+  },
+  {
+   "op": "copy",
+   "from": "0x002BAC60",
+   "to": "TS2ROSTER+0x0",
+   "size": "0xFE0",
+   "why": "the disc's 127 roster entries, in their order"
+  },
+  {
+   "op": "write",
+   "va": "TS2ROSTER+0xFE0",
+   "bytes": "5C00000024020000D90100000000000000000000000000000000000000000000 5C00000025020000D90100000000000000000000000000000000000000000000 5C00000026020000D90100000000000000000000000000000000000000000000 5C00000027020000D90100000000000000000000000000000000000000000000 5C00000028020000D90100000000000000000000000000000000000000000000 5C00000029020000D90100000000000000000000000000000000000000000000 5C0000002A020000D90100000000000000000000000000000000000000000000 5C0000002B020000D90100000000000000000000000000000000000000000000 5C0000002C020000D90100000000000000000000000000000000000000000000 5C0000002D020000D90100000000000000000000000000000000000000000000 5C0000002E020000D90100000000000000000000000000000000000000000000 5C0000002F020000D90100000000000000000000000000000000000000000000 5C00000030020000D90100000000000000000000000000000000000000000000 5C00000031020000D90100000000000000000000000000000000000000000000 5C00000032020000D90100000000000000000000000000000000000000000000 5C00000033020000D90100000000000000000000000000000000000000000000 5C00000034020000D90100000000000000000000000000000000000000000000 5C00000035020000D90100000000000000000000000000000000000000000000 5C00000036020000D90100000000000000000000000000000000000000000000 5C00000037020000D90100000000000000000000000000000000000000000000 5C00000038020000D90100000000000000000000000000000000000000000000 5C00000039020000D90100000000000000000000000000000000000000000000 5C0000003A020000D90100000000000000000000000000000000000000000000 5C0000003B020000D90100000000000000000000000000000000000000000000 5C0000003C020000D90100000000000000000000000000000000000000000000 5C0000003D020000D90100000000000000000000000000000000000000000000 5C0000003E020000D90100000000000000000000000000000000000000000000 5C0000003F020000D90100000000000000000000000000000000000000000000 5C00000040020000D90100000000000000000000000000000000000000000000 5C00000041020000D90100000000000000000000000000000000000000000000 5C00000042020000D90100000000000000000000000000000000000000000000 5C00000043020000D90100000000000000000000000000000000000000000000",
+   "why": "spare slots 127-158: the Consultant's entry (chr id 92, gangster background, unlock kind 0 'never', so hidden everywhere), each with a portrait of its own, texture 548-579"
+  },
+  {
+   "op": "write",
+   "va": "TS2ROSTER+0x13E0",
+   "bytes": "FFFFFFFF",
+   "why": "the sentinel after the last slot: chr id -1, where the four chr id searches below now stop"
+  },
+  {
+   "op": "copy",
+   "from": "0x002BF7B0",
+   "to": "TS2ROSTER+0x1800",
+   "size": "0x2240",
+   "why": "the disc's 548 texture list entries: how to load (+0), load flags (+4), path (+8), handle (+0xC)"
+  },
+  {
+   "op": "write",
+   "va": "TS2ROSTER+0x3A40",
+   "bytes": "01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000 01000000000000006032220000000000",
+   "why": "the spare slots' portraits, texture 548-579: the Consultant's path (ped3) with load flags 0, which no level loads; a mod's ts2/characters.ini gives each its own file and the Consultant's flags"
+  },
+  {
+   "op": "patch",
+   "va": "0x00087A97",
+   "insn": "0x00087A96",
+   "old": "60AC2B00",
+   "new": "00E04C00",
+   "why": "sub_00087A90 mov, ecx, 0x2bac60: unlock rule by chr id: where its search starts (0x002BAC60 -> 0x004CE000)"
+  },
+  {
+   "op": "patch",
+   "va": "0x00087AB9",
+   "insn": "0x00087AB8",
+   "old": "60AC2B00",
+   "new": "00E04C00",
+   "why": "sub_00087A90 add, eax, 0x2bac60: unlock rule by chr id: the entry it found (0x002BAC60 -> 0x004CE000)"
+  },
+  {
+   "op": "patch",
+   "va": "0x00087AD7",
+   "insn": "0x00087AD6",
+   "old": "60AC2B00",
+   "new": "00E04C00",
+   "why": "sub_00087AD0 mov, ecx, 0x2bac60: portrait by chr id (HUD, scoreboard, 18 callers): search start (0x002BAC60 -> 0x004CE000)"
+  },
+  {
+   "op": "patch",
+   "va": "0x00087AF6",
+   "insn": "0x00087AF4",
+   "old": "64AC2B00",
+   "new": "04E04C00",
+   "why": "sub_00087AD0 mov, eax, dword ptr [eax + 0x2bac64]: portrait by chr id: the found entry's +4 (0x002BAC64 -> 0x004CE004)"
+  },
+  {
+   "op": "patch",
+   "va": "0x00087C26",
+   "insn": "0x00087C24",
+   "old": "6CAC2B00",
+   "new": "0CE04C00",
+   "why": "sub_00087C20 mov, edx, dword ptr [eax + 0x2bac6c]: n-th unlocked character: counts the shown entries (+0xC) (0x002BAC6C -> 0x004CE00C)"
+  },
+  {
+   "op": "patch",
+   "va": "0x00087C4A",
+   "insn": "0x00087C49",
+   "old": "60AC2B00",
+   "new": "00E04C00",
+   "why": "sub_00087C20 mov, edi, 0x2bac60: n-th unlocked character: walks the entries (0x002BAC60 -> 0x004CE000)"
+  },
+  {
+   "op": "patch",
+   "va": "0x00087C56",
+   "insn": "0x00087C54",
+   "old": "6CAC2B00",
+   "new": "0CE04C00",
+   "why": "sub_00087C20 mov, edx, dword ptr [eax + 0x2bac6c]: n-th unlocked character: counts the shown entries again (0x002BAC6C -> 0x004CE00C)"
+  },
+  {
+   "op": "patch",
+   "va": "0x00087C8F",
+   "insn": "0x00087C8D",
+   "old": "60AC2B00",
+   "new": "00E04C00",
+   "why": "sub_00087C20 mov, eax, dword ptr [esi + 0x2bac60]: n-th unlocked character: the chr id it returns (0x002BAC60 -> 0x004CE000)"
+  },
+  {
+   "op": "patch",
+   "va": "0x00087CB2",
+   "insn": "0x00087CB0",
+   "old": "60AC2B00",
+   "new": "00E04C00",
+   "why": "sub_00087CA0 mov, eax, dword ptr [esi + 0x2bac60]: count of unlocked characters (0x002BAC60 -> 0x004CE000)"
+  },
+  {
+   "op": "patch",
+   "va": "0x0008D07A",
+   "insn": "0x0008D078",
+   "old": "60AC2B00",
+   "new": "00E04C00",
+   "why": "sub_0008CED0 mov, ebx, dword ptr [edx + 0x2bac60]: bot set: a chosen bot's chr id, by the list item's roster index (0x002BAC60 -> 0x004CE000)"
+  },
+  {
+   "op": "patch",
+   "va": "0x0008E200",
+   "insn": "0x0008E1FC",
+   "old": "60AC2B00",
+   "new": "00E04C00",
+   "why": "sub_0008DEE0 mov, dword ptr [esp + 0x18], 0x2bac60: the Available Bots list: walks the entries (0x002BAC60 -> 0x004CE000)"
+  },
+  {
+   "op": "patch",
+   "va": "0x0008FB5D",
+   "insn": "0x0008FB5C",
+   "old": "60AC2B00",
+   "new": "00E04C00",
+   "why": "sub_0008FAE0 mov, ebp, 0x2bac60: Select Character item: finds its portrait by chr id (0x002BAC60 -> 0x004CE000)"
+  },
+  {
+   "op": "patch",
+   "va": "0x0008FC33",
+   "insn": "0x0008FC31",
+   "old": "60AC2B00",
+   "new": "00E04C00",
+   "why": "sub_0008FAE0 add, ecx, 0x2bac60: Select Character item: the entry it found (0x002BAC60 -> 0x004CE000)"
+  },
+  {
+   "op": "patch",
+   "va": "0x00095306",
+   "insn": "0x00095304",
+   "old": "60AC2B00",
+   "new": "00E04C00",
+   "why": "sub_000952C0 mov, edx, dword ptr [esi + 0x2bac60]: unlock snapshot: each entry's chr id (0x002BAC60 -> 0x004CE000)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000954BE",
+   "insn": "0x000954BD",
+   "old": "60AC2B00",
+   "new": "00E04C00",
+   "why": "sub_000954B0 mov, edi, 0x2bac60: new-unlock announcement: walks the entries (0x002BAC60 -> 0x004CE000)"
+  },
+  {
+   "op": "patch",
+   "va": "0x00098E26",
+   "insn": "0x00098E24",
+   "old": "60AC2B00",
+   "new": "00E04C00",
+   "why": "sub_00098E00 mov, eax, dword ptr [ecx + 0x2bac60]: Gallery: the selected character's chr id (0x002BAC60 -> 0x004CE000)"
+  },
+  {
+   "op": "patch",
+   "va": "0x00098E4F",
+   "insn": "0x00098E4D",
+   "old": "64AC2B00",
+   "new": "04E04C00",
+   "why": "sub_00098E00 mov, eax, dword ptr [edx + 0x2bac64]: Gallery: the selected character's portrait (0x002BAC64 -> 0x004CE004)"
+  },
+  {
+   "op": "patch",
+   "va": "0x00098F52",
+   "insn": "0x00098F50",
+   "old": "6CAC2B00",
+   "new": "0CE04C00",
+   "why": "sub_00098F40 mov, edx, dword ptr [eax + 0x2bac6c]: Gallery grid: counts the shown entries (0x002BAC6C -> 0x004CE00C)"
+  },
+  {
+   "op": "patch",
+   "va": "0x00098F81",
+   "insn": "0x00098F80",
+   "old": "64AC2B00",
+   "new": "04E04C00",
+   "why": "sub_00098F40 mov, esi, 0x2bac64: Gallery grid: each cell's portrait (+4) (0x002BAC64 -> 0x004CE004)"
+  },
+  {
+   "op": "patch",
+   "va": "0x00099462",
+   "insn": "0x00099460",
+   "old": "6CAC2B00",
+   "new": "0CE04C00",
+   "why": "sub_00099430 mov, ecx, dword ptr [eax + 0x2bac6c]: Gallery cursor: counts the shown entries (0x002BAC6C -> 0x004CE00C)"
+  },
+  {
+   "op": "patch",
+   "va": "0x00099714",
+   "insn": "0x00099712",
+   "old": "60AC2B00",
+   "new": "00E04C00",
+   "why": "sub_00099430 mov, esi, dword ptr [eax + 0x2bac60]: Gallery cursor: the selected chr id (0x002BAC60 -> 0x004CE000)"
+  },
+  {
+   "op": "patch",
+   "va": "0x0009984D",
+   "insn": "0x0009984B",
+   "old": "60AC2B00",
+   "new": "00E04C00",
+   "why": "sub_00099430 mov, eax, dword ptr [eax + 0x2bac60]: Gallery cursor: the description's text id (625 + chr id) (0x002BAC60 -> 0x004CE000)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000999CC",
+   "insn": "0x000999CB",
+   "old": "60AC2B00",
+   "new": "00E04C00",
+   "why": "sub_00099960 mov, eax, dword ptr [0x2bac60]: Gallery build: entry 0's name (0x002BAC60 -> 0x004CE000)"
+  },
+  {
+   "op": "patch",
+   "va": "0x0009CCCC",
+   "insn": "0x0009CCCB",
+   "old": "60AC2B00",
+   "new": "00E04C00",
+   "why": "sub_0009CC00 mov, ecx, 0x2bac60: profile icon: finds the profile's character by chr id (0x002BAC60 -> 0x004CE000)"
+  },
+  {
+   "op": "patch",
+   "va": "0x0009CD27",
+   "insn": "0x0009CD26",
+   "old": "60AC2B00",
+   "new": "00E04C00",
+   "why": "sub_0009CC00 add, eax, 0x2bac60: profile icon: the entry it found (0x002BAC60 -> 0x004CE000)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000A3CB2",
+   "insn": "0x000A3CB0",
+   "old": "60AC2B00",
+   "new": "00E04C00",
+   "why": "sub_000A3C60 mov, esi, dword ptr [ebx + 0x2bac60]: the Select Character list: walks the entries (0x002BAC60 -> 0x004CE000)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000952FE",
+   "insn": "0x000952FD",
+   "old": "D8C23500",
+   "new": "00F44C00",
+   "why": "sub_000952C0 mov, edi, 0x35c2d8: unlock snapshot: where it writes (0x0035C2D8 -> 0x004CF400)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000954CE",
+   "insn": "0x000954CC",
+   "old": "D8C23500",
+   "new": "00F44C00",
+   "why": "sub_000954B0 mov, ecx, dword ptr [ebx + 0x35c2d8]: new-unlock announcement: the snapshot it compares with (0x0035C2D8 -> 0x004CF400)"
+  },
+  {
+   "op": "patch",
+   "va": "0x00087C33",
+   "insn": "0x00087C32",
+   "old": "E00F0000",
+   "new": "E0130000",
+   "why": "sub_00087C20 cmp, eax, 0xfe0: n-th unlocked character: shown-entry count loop (0xFE0 -> 0x13E0); spare slots are kind 0, so the count of shown or unlocked entries does not change"
+  },
+  {
+   "op": "patch",
+   "va": "0x00087C63",
+   "insn": "0x00087C62",
+   "old": "E00F0000",
+   "new": "E0130000",
+   "why": "sub_00087C20 cmp, eax, 0xfe0: n-th unlocked character: the same count, again (0xFE0 -> 0x13E0); spare slots are kind 0, so the count of shown or unlocked entries does not change"
+  },
+  {
+   "op": "patch",
+   "va": "0x00087CC9",
+   "insn": "0x00087CC7",
+   "old": "E00F0000",
+   "new": "E0130000",
+   "why": "sub_00087CA0 cmp, esi, 0xfe0: count of unlocked characters (0xFE0 -> 0x13E0); spare slots are kind 0, so the count of shown or unlocked entries does not change"
+  },
+  {
+   "op": "patch",
+   "va": "0x0009531D",
+   "insn": "0x0009531B",
+   "old": "E00F0000",
+   "new": "E0130000",
+   "why": "sub_000952C0 cmp, esi, 0xfe0: unlock snapshot: one dword per entry (0xFE0 -> 0x13E0); spare slots are kind 0, so the count of shown or unlocked entries does not change"
+  },
+  {
+   "op": "patch",
+   "va": "0x00098F5F",
+   "insn": "0x00098F5E",
+   "old": "E00F0000",
+   "new": "E0130000",
+   "why": "sub_00098F40 cmp, eax, 0xfe0: Gallery grid: shown-entry count (0xFE0 -> 0x13E0); spare slots are kind 0, so the count of shown or unlocked entries does not change"
+  },
+  {
+   "op": "patch",
+   "va": "0x0009946F",
+   "insn": "0x0009946E",
+   "old": "E00F0000",
+   "new": "E0130000",
+   "why": "sub_00099430 cmp, eax, 0xfe0: Gallery cursor: shown-entry count (0xFE0 -> 0x13E0); spare slots are kind 0, so the count of shown or unlocked entries does not change"
+  },
+  {
+   "op": "patch",
+   "va": "0x000A3D1E",
+   "insn": "0x000A3D1C",
+   "old": "E00F0000",
+   "new": "E0130000",
+   "why": "sub_000A3C60 cmp, ebx, 0xfe0: the Select Character list (0xFE0 -> 0x13E0); spare slots are kind 0, so the count of shown or unlocked entries does not change"
+  },
+  {
+   "op": "patch",
+   "va": "0x00095506",
+   "insn": "0x00095504",
+   "old": "FC010000",
+   "new": "7C020000",
+   "why": "sub_000954B0 cmp, ebx, 0x1fc: new-unlock announcement: 127 * 4, the snapshot's size; not in roster.md's first list (0x1FC -> 0x27C)"
+  },
+  {
+   "op": "patch",
+   "va": "0x00087AA8",
+   "old": "83F87F",
+   "new": "8339FF",
+   "why": "sub_00087A90 cmp, eax, 0x7f -> cmp dword ptr [ecx], -1: unlock rule by chr id; a search by chr id bounded by 127 as an imm8, which cannot be raised, so it stops at the sentinel instead (ecx has just moved to the next entry)"
+  },
+  {
+   "op": "patch",
+   "va": "0x00087AE8",
+   "old": "83F87F",
+   "new": "8339FF",
+   "why": "sub_00087AD0 cmp, eax, 0x7f -> cmp dword ptr [ecx], -1: portrait by chr id; a search by chr id bounded by 127 as an imm8, which cannot be raised, so it stops at the sentinel instead (ecx has just moved to the next entry)"
+  },
+  {
+   "op": "patch",
+   "va": "0x0008E28C",
+   "old": "83FD7F",
+   "new": "8339FF",
+   "why": "sub_0008DEE0 cmp, ebp, 0x7f -> cmp dword ptr [ecx], -1: the Available Bots list; a search by chr id bounded by 127 as an imm8, which cannot be raised, so it stops at the sentinel instead (ecx has just moved to the next entry)"
+  },
+  {
+   "op": "patch",
+   "va": "0x0009CCD8",
+   "old": "83F87F",
+   "new": "8339FF",
+   "why": "sub_0009CC00 cmp, eax, 0x7f -> cmp dword ptr [ecx], -1: profile icon; a search by chr id bounded by 127 as an imm8, which cannot be raised, so it stops at the sentinel instead (ecx has just moved to the next entry)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000A9AE9",
+   "insn": "0x000A9AE7",
+   "old": "BCF72B00",
+   "new": "0CF84C00",
+   "why": "sub_000A9AE0 mov, eax, dword ptr [eax + 0x2bf7bc]: a texture's handle, by index (+0xC) (entry 0 +0xC) (0x002BF7BC -> 0x004CF80C)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000A9AF9",
+   "insn": "0x000A9AF7",
+   "old": "B8F72B00",
+   "new": "08F84C00",
+   "why": "sub_000A9AE0 mov, eax, dword ptr [eax + 0x2bf7b8]: a texture's path, by index (+8) (entry 0 +0x8) (0x002BF7B8 -> 0x004CF808)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000A9C08",
+   "insn": "0x000A9C06",
+   "old": "BCF72B00",
+   "new": "0CF84C00",
+   "why": "sub_000A9BE0 cmp, dword ptr [eax + 0x2bf7bc], -2: load by index: not loaded yet (+0xC == -2) (entry 0 +0xC) (0x002BF7BC -> 0x004CF80C)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000A9C21",
+   "insn": "0x000A9C1F",
+   "old": "B0F72B00",
+   "new": "00F84C00",
+   "why": "sub_000A9BE0 mov, ecx, dword ptr [eax + 0x2bf7b0]: load by index: how (+0) (entry 0 +0x0) (0x002BF7B0 -> 0x004CF800)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000A9C29",
+   "insn": "0x000A9C27",
+   "old": "BCF72B00",
+   "new": "0CF84C00",
+   "why": "sub_000A9BE0 mov, dword ptr [eax + 0x2bf7bc], edx: load by index: handle (entry 0 +0xC) (0x002BF7BC -> 0x004CF80C)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000A9C31",
+   "insn": "0x000A9C2F",
+   "old": "B8F72B00",
+   "new": "08F84C00",
+   "why": "sub_000A9BE0 mov, eax, dword ptr [eax + 0x2bf7b8]: load by index: path (entry 0 +0x8) (0x002BF7B8 -> 0x004CF808)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000A9C46",
+   "insn": "0x000A9C44",
+   "old": "B8F72B00",
+   "new": "08F84C00",
+   "why": "sub_000A9BE0 mov, ecx, dword ptr [eax + 0x2bf7b8]: load by index: path (entry 0 +0x8) (0x002BF7B8 -> 0x004CF808)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000A9C65",
+   "insn": "0x000A9C64",
+   "old": "B4F72B00",
+   "new": "04F84C00",
+   "why": "sub_000A9C60 mov, esi, 0x2bf7b4: load a level's textures: walks the flags (+4) (entry 0 +0x4) (0x002BF7B4 -> 0x004CF804)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000A9D2A",
+   "insn": "0x000A9D29",
+   "old": "B4F72B00",
+   "new": "04F84C00",
+   "why": "sub_000A9D20 mov, esi, 0x2bf7b4: load the textures with given flags: walks the flags (entry 0 +0x4) (0x002BF7B4 -> 0x004CF804)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000A9D5D",
+   "insn": "0x000A9D5C",
+   "old": "BCF72B00",
+   "new": "0CF84C00",
+   "why": "sub_000A9D50 mov, esi, 0x2bf7bc: look every handle up again: walks the handles (entry 0 +0xC) (0x002BF7BC -> 0x004CF80C)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000A9D8B",
+   "insn": "0x000A9D89",
+   "old": "1CF82B00",
+   "new": "6CF84C00",
+   "why": "sub_000A9D50 mov, edx, dword ptr [0x2bf81c]: a fixed texture's handle (entry 6 +0xC) (0x002BF81C -> 0x004CF86C)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000A9D90",
+   "insn": "0x000A9D8F",
+   "old": "2CF82B00",
+   "new": "7CF84C00",
+   "why": "sub_000A9D50 mov, eax, dword ptr [0x2bf82c]: a fixed texture's handle (entry 7 +0xC) (0x002BF82C -> 0x004CF87C)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000A9D96",
+   "insn": "0x000A9D94",
+   "old": "3CF82B00",
+   "new": "8CF84C00",
+   "why": "sub_000A9D50 mov, ecx, dword ptr [0x2bf83c]: a fixed texture's handle (entry 8 +0xC) (0x002BF83C -> 0x004CF88C)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000A9DA2",
+   "insn": "0x000A9DA0",
+   "old": "4CF82B00",
+   "new": "9CF84C00",
+   "why": "sub_000A9D50 mov, edx, dword ptr [0x2bf84c]: a fixed texture's handle (entry 9 +0xC) (0x002BF84C -> 0x004CF89C)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000A9DAC",
+   "insn": "0x000A9DAB",
+   "old": "5CF82B00",
+   "new": "ACF84C00",
+   "why": "sub_000A9D50 mov, eax, dword ptr [0x2bf85c]: a fixed texture's handle (entry 10 +0xC) (0x002BF85C -> 0x004CF8AC)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000A9DB8",
+   "insn": "0x000A9DB6",
+   "old": "EC192C00",
+   "new": "3C1A4D00",
+   "why": "sub_000A9D50 mov, ecx, dword ptr [0x2c19ec]: a fixed texture's handle (entry 547 +0xC) (0x002C19EC -> 0x004D1A3C)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000A9E7B",
+   "insn": "0x000A9E79",
+   "old": "BCFD2B00",
+   "new": "0CFE4C00",
+   "why": "sub_000A9E70 mov, edx, dword ptr [0x2bfdbc]: a fixed texture's handle (entry 96 +0xC) (0x002BFDBC -> 0x004CFE0C)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000AA3A1",
+   "insn": "0x000AA3A0",
+   "old": "6CF82B00",
+   "new": "BCF84C00",
+   "why": "sub_000AA3A0 mov, eax, dword ptr [0x2bf86c]: a fixed texture's handle (entry 11 +0xC) (0x002BF86C -> 0x004CF8BC)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000AA481",
+   "insn": "0x000AA480",
+   "old": "6CF82B00",
+   "new": "BCF84C00",
+   "why": "sub_000AA480 mov, eax, dword ptr [0x2bf86c]: a fixed texture's handle (entry 11 +0xC) (0x002BF86C -> 0x004CF8BC)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000AA4D1",
+   "insn": "0x000AA4D0",
+   "old": "6CF82B00",
+   "new": "BCF84C00",
+   "why": "sub_000AA4D0 mov, eax, dword ptr [0x2bf86c]: a fixed texture's handle (entry 11 +0xC) (0x002BF86C -> 0x004CF8BC)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000AA521",
+   "insn": "0x000AA520",
+   "old": "6CF82B00",
+   "new": "BCF84C00",
+   "why": "sub_000AA520 mov, eax, dword ptr [0x2bf86c]: a fixed texture's handle (entry 11 +0xC) (0x002BF86C -> 0x004CF8BC)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000AA571",
+   "insn": "0x000AA570",
+   "old": "6CF82B00",
+   "new": "BCF84C00",
+   "why": "sub_000AA570 mov, eax, dword ptr [0x2bf86c]: a fixed texture's handle (entry 11 +0xC) (0x002BF86C -> 0x004CF8BC)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000AA9DC",
+   "insn": "0x000AA9DA",
+   "old": "8C182C00",
+   "new": "DC184D00",
+   "why": "sub_000AA970 mov, edx, dword ptr [0x2c188c]: a fixed texture's handle (entry 525 +0xC) (0x002C188C -> 0x004D18DC)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000AAB2E",
+   "insn": "0x000AAB2C",
+   "old": "8CFD2B00",
+   "new": "DCFD4C00",
+   "why": "sub_000AA970 mov, ecx, dword ptr [0x2bfd8c]: a fixed texture's handle (entry 93 +0xC) (0x002BFD8C -> 0x004CFDDC)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000AAB9F",
+   "insn": "0x000AAB9D",
+   "old": "8CFD2B00",
+   "new": "DCFD4C00",
+   "why": "sub_000AA970 mov, edx, dword ptr [0x2bfd8c]: a fixed texture's handle (entry 93 +0xC) (0x002BFD8C -> 0x004CFDDC)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000AAC9F",
+   "insn": "0x000AAC9D",
+   "old": "8C182C00",
+   "new": "DC184D00",
+   "why": "sub_000AABF0 mov, ecx, dword ptr [0x2c188c]: a fixed texture's handle (entry 525 +0xC) (0x002C188C -> 0x004D18DC)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000AAEFC",
+   "insn": "0x000AAEFA",
+   "old": "8CFD2B00",
+   "new": "DCFD4C00",
+   "why": "sub_000AABF0 mov, ecx, dword ptr [0x2bfd8c]: a fixed texture's handle (entry 93 +0xC) (0x002BFD8C -> 0x004CFDDC)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000AAFA0",
+   "insn": "0x000AAF9F",
+   "old": "8CFD2B00",
+   "new": "DCFD4C00",
+   "why": "sub_000AABF0 mov, eax, dword ptr [0x2bfd8c]: a fixed texture's handle (entry 93 +0xC) (0x002BFD8C -> 0x004CFDDC)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000AB058",
+   "insn": "0x000AB056",
+   "old": "8CFD2B00",
+   "new": "DCFD4C00",
+   "why": "sub_000AB000 mov, ecx, dword ptr [0x2bfd8c]: a fixed texture's handle (entry 93 +0xC) (0x002BFD8C -> 0x004CFDDC)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000AB2E1",
+   "insn": "0x000AB2E0",
+   "old": "7CF82B00",
+   "new": "CCF84C00",
+   "why": "sub_000AB2E0 mov, eax, dword ptr [0x2bf87c]: a fixed texture's handle (entry 12 +0xC) (0x002BF87C -> 0x004CF8CC)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000AB32F",
+   "insn": "0x000AB32E",
+   "old": "7CF82B00",
+   "new": "CCF84C00",
+   "why": "sub_000AB2E0 mov, eax, dword ptr [0x2bf87c]: a fixed texture's handle (entry 12 +0xC) (0x002BF87C -> 0x004CF8CC)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000AB36C",
+   "insn": "0x000AB36A",
+   "old": "7CF82B00",
+   "new": "CCF84C00",
+   "why": "sub_000AB2E0 mov, ecx, dword ptr [0x2bf87c]: a fixed texture's handle (entry 12 +0xC) (0x002BF87C -> 0x004CF8CC)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000AB3AC",
+   "insn": "0x000AB3AA",
+   "old": "7CF82B00",
+   "new": "CCF84C00",
+   "why": "sub_000AB2E0 mov, ecx, dword ptr [0x2bf87c]: a fixed texture's handle (entry 12 +0xC) (0x002BF87C -> 0x004CF8CC)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000A9C95",
+   "insn": "0x000A9C93",
+   "old": "F4192C00",
+   "new": "441C4D00",
+   "why": "sub_000A9C60 cmp, esi, 0x2c19f4: load a level's textures: the end of the flags walk (0x002C19F4 -> 0x004D1C44)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000A9D43",
+   "insn": "0x000A9D41",
+   "old": "F4192C00",
+   "new": "441C4D00",
+   "why": "sub_000A9D20 cmp, esi, 0x2c19f4: load the textures with given flags: the end (0x002C19F4 -> 0x004D1C44)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000A9D83",
+   "insn": "0x000A9D81",
+   "old": "FC192C00",
+   "new": "4C1C4D00",
+   "why": "sub_000A9D50 cmp, esi, 0x2c19fc: look every handle up again: the end (0x002C19FC -> 0x004D1C4C)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000A9BEC",
+   "insn": "0x000A9BEB",
+   "old": "24020000",
+   "new": "44020000",
+   "why": "sub_000A9BE0 cmp, eax, 0x224: load by index refuses an index from 548 (0x224) up (0x224 -> 0x244)"
+  },
+  {
+   "op": "patch",
+   "va": "0x000ED738",
+   "insn": "0x000ED737",
+   "old": "63010000",
+   "new": "E3010000",
+   "why": "sub_000ED6F0 and, eax, 0x163: front-end menu items: 0x163 + 200 (and eax, 0x163 after eax = -1 when the level is 101) (0x163 -> 0x1E3); 4 more per spare slot, one per player's column"
+  }
+ ]
+}

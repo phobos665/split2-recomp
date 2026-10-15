@@ -852,17 +852,18 @@ static void ts2_ui_leave(void)
 /* ── TimeSplitters 2: extra playable characters, declared by mods ── */
 
 /*
- * A mod adds a playable character by taking over a roster slot and a chr id
- * that has files on the disc but nobody plays (docs/formats/roster.md, "What
- * adding a character would take", route 1). It says so in
- * <mod>/ts2/characters.ini, read once at start-up from the first folder in
- * RECOMP_MODS that has one (xboxrecomp xbox_mods_find). Its model goes where
- * that chr id's files are (ob/chrs/chrNN.xbr in chr.pak, ob/chrincs/chrNN.xbr
- * in chrinc.pak), its portrait into the front end's pak, both through
- * tools/ts2mod.py; this is the part the game's tables need:
+ * A mod adds a playable character by taking a roster slot and a chr id that
+ * has files on the disc but nobody plays (docs/formats/roster.md, "Adding a
+ * character (mods)"). It says so in <mod>/ts2/characters.ini, read once at
+ * start-up from the first folder in RECOMP_MODS that has one (xboxrecomp
+ * xbox_mods_find). Its model goes where that chr id's files are
+ * (ob/chrs/chrNN.xbr in chr.pak, ob/chrincs/chrNN.xbr in chrinc.pak), its
+ * portrait into the front end's pak, both through tools/ts2mod.py; this is
+ * the part the game's tables need:
  *
  *   [Agent Static]
- *   slot = 126                ; roster entry 0-126 to take over
+ *   slot = next               ; a spare slot (127-158 on PAL), or 0-126 to
+ *                             ; take over the character there
  *   chr = 70                  ; chr id: its model, definition and files
  *   name = Agent Static       ; in every language; name.fr = ... and so on
  *   bio = Nobody knows ...    ; the Gallery's description; bio.fr = ... too
@@ -892,17 +893,37 @@ static void ts2_ui_leave(void)
  *   - optionally the stats (+0x2C class, +0x30-0x38 per difficulty, +0x3C
  *     agility) and the sound set (+0x04) copied from another character.
  *
+ * The roster is the disc's 127 entries and, on PAL, 32 spare slots after
+ * them: config/pal/xbe_patches.json moves it into a section of its own and
+ * repoints the code before the lift. A spare slot is the Consultant's entry
+ * (the disc's one hidden character, slot 126) with a portrait of its own:
+ * unlock kind 0, which hides it from every list, so without a mod nothing
+ * changes. Two things the patches cannot do are done here:
+ *
+ *   - The Gallery draws the first n entries, n the number whose kind is not
+ *     0, so a hidden slot among the shown ones (slot 126, below the spare
+ *     slots) would take a shown one's cell. Once a mod's characters are in,
+ *     the hidden entries are moved behind the shown ones (ts2_chars_compact);
+ *     nothing keeps a roster index past a screen, only chr ids.
+ *   - sub_0008FAE0, which draws a Select Character item's portrait, finds
+ *     its character by chr id in the first 127 entries only (its count is
+ *     an imm8 the patches cannot raise). ts2_chars_item_draw moves an entry
+ *     past them into that range for the call.
+ *
  * The Gallery (Options > Player Options > View Gallery) shows the roster as
  * one 14 x 9 grid, which 126 characters fill; a 127th would start a tenth
- * row below the panel. ts2_gallery_build widens it to 15 columns and
- * ts2_gallery_draw draws its cells smaller to match (below).
+ * row below the panel. ts2_gallery_build widens it to as many columns as
+ * nine rows need and ts2_gallery_draw draws its cells smaller to match.
  */
 typedef struct Ts2Roster {
     uint32_t roster;          /* 0x20-byte entries: chr id, portrait, background, unlock[5] */
-    int      roster_count;
+    int      roster_count;    /* with the spare slots */
+    int      spare_first;     /* the first spare slot: the disc's count */
+    int      search_count;    /* the entries sub_0008FAE0's chr id search covers */
     uint32_t defs;            /* 0x44-byte character definitions, by chr id */
     int      def_count;
-    uint32_t textures;        /* 0x10-byte texture list entries; +0 is the path */
+    uint32_t textures;        /* 0x10-byte texture list entries, at their +8: the path;
+                               * -8 how to load, -4 load flags, +4 the handle */
     int      texture_count;
     int      blank_first;     /* chrblank_<set> textures, in the texture list */
     int      blank_count;
@@ -926,7 +947,7 @@ extern uint32_t xbox_HeapAlloc(uint32_t size, uint32_t alignment);
 #define TS2_MEM16(a) (*(volatile int16_t *)((uintptr_t)(uint32_t)(a) + g_xbox_mem_offset))
 #define TS2_PTR8(a)  ((char *)((uintptr_t)(uint32_t)(a) + g_xbox_mem_offset))
 
-enum { TS2_CHR_MAX = 8, TS2_LANGS = 5 };
+enum { TS2_CHR_MAX = 48, TS2_LANGS = 5, TS2_SLOT_NEXT = -2 };
 
 typedef struct Ts2Char {
     char title[64];
@@ -1018,7 +1039,7 @@ static void ts2_chars_read(const char *path)
         if (semi)
             *semi = 0;
         val = ts2_trim(val);
-        if (!strcmp(key, "slot"))            c->slot = atoi(val);
+        if (!strcmp(key, "slot"))            c->slot = !strcmp(val, "next") ? TS2_SLOT_NEXT : atoi(val);
         else if (!strcmp(key, "chr"))        c->chr = atoi(val);
         else if (!strcmp(key, "stats"))      c->stats_from = atoi(val);
         else if (!strcmp(key, "sounds"))     c->sounds_from = atoi(val);
@@ -1105,8 +1126,18 @@ static void ts2_char_apply(const Ts2Roster *r, const Ts2Char *c)
             strcpy(dot, ".raw");
         else
             strncat(path, ".raw", sizeof path - strlen(path) - 1);
-        if (tex >= 0 && tex < r->texture_count)
-            TS2_MEM32(r->textures + (uint32_t)tex * 0x10) = ts2_guest_string(path);
+        if (tex >= 0 && tex < r->texture_count) {
+            uint32_t t = r->textures + (uint32_t)tex * 0x10;
+            /* A spare slot's entry has load flags 0, so no level loads it;
+             * it takes how and when slot 0's portrait is loaded (the front
+             * end's chrimage_* textures, flags 3). */
+            if (TS2_MEM32(t - 4) == 0) {
+                uint32_t like = r->textures + TS2_MEM32(r->roster + 4) * 0x10;
+                TS2_MEM32(t - 8) = TS2_MEM32(like - 8);
+                TS2_MEM32(t - 4) = TS2_MEM32(like - 4);
+            }
+            TS2_MEM32(t) = ts2_guest_string(path);
+        }
     }
 
     /* The set background shown while locked: chrblank_<set>.raw. */
@@ -1141,12 +1172,64 @@ static void ts2_char_apply(const Ts2Roster *r, const Ts2Char *c)
             (unsigned)TS2_MEM32(entry + 8), (unsigned)TS2_MEM32(entry + 0x0C));
 }
 
+/* A section's slot, `slot = next` given the first spare slot no other
+ * section names; -1 when there is none left or the slot is out of range. */
+static int ts2_chars_slot(const Ts2Roster *r, int i)
+{
+    int slot, j, taken;
+
+    if (g_ts2_chars[i].slot != TS2_SLOT_NEXT)
+        return g_ts2_chars[i].slot >= 0 && g_ts2_chars[i].slot < r->roster_count
+               ? g_ts2_chars[i].slot : -1;
+    for (slot = r->spare_first; slot < r->roster_count; slot++) {
+        for (taken = 0, j = 0; j < g_ts2_char_count && !taken; j++)
+            taken = j != i && g_ts2_chars[j].slot == slot;
+        if (!taken)
+            return g_ts2_chars[i].slot = slot;
+    }
+    return -1;
+}
+
+/* The shown entries (unlock kind not 0) first, in their order, then the
+ * hidden ones: the Gallery draws the first n entries, n the shown count, so
+ * a hidden slot among them (126, the Consultant, before the spare slots)
+ * would take a cell from the last shown one. The lists of characters walk
+ * the table in order and skip hidden entries, so their order is unchanged;
+ * what the game keeps of a character beyond a screen (profile, bot sets,
+ * players) is its chr id, not its slot. */
+static void ts2_chars_compact(const Ts2Roster *r)
+{
+    static uint32_t hidden[256 * 8];
+    int i, k, shown = 0, n = 0;
+
+    if (r->roster_count > 256)
+        return;
+    for (i = 0; i < r->roster_count; i++) {
+        uint32_t e = r->roster + (uint32_t)i * 0x20;
+        if (TS2_MEM32(e + 0x0C)) {
+            if (shown != i)
+                for (k = 0; k < 8; k++)
+                    TS2_MEM32(r->roster + (uint32_t)shown * 0x20 + 4u * k) = TS2_MEM32(e + 4u * k);
+            shown++;
+        } else {
+            for (k = 0; k < 8; k++)
+                hidden[n * 8 + k] = TS2_MEM32(e + 4u * k);
+            n++;
+        }
+    }
+    for (i = 0; i < n; i++)
+        for (k = 0; k < 8; k++)
+            TS2_MEM32(r->roster + (uint32_t)(shown + i) * 0x20 + 4u * k) = hidden[i * 8 + k];
+    fprintf(stderr, "[TS2-CHR] roster: %d shown, then %d hidden (%d slots)\n",
+            shown, n, r->roster_count);
+}
+
 /* The game's main(argc, argv): the tables are patched before it reads them. */
 static void ts2_chars_main(void (*main_fn)(void))
 {
     const Ts2Roster *r = &k_ts2_roster;
     char path[1024];
-    int i, mod = xbox_mods_find("ts2/characters.ini", path, sizeof path);
+    int i, applied = 0, mod = xbox_mods_find("ts2/characters.ini", path, sizeof path);
 
     if (mod >= 0) {
         if (!r->roster) {
@@ -1157,18 +1240,59 @@ static void ts2_chars_main(void (*main_fn)(void))
             ts2_chars_read(path);
             for (i = 0; i < g_ts2_char_count; i++) {
                 const Ts2Char *c = &g_ts2_chars[i];
-                if (c->slot < 0 || c->slot >= r->roster_count ||
-                    c->chr < 0 || c->chr >= r->def_count) {
-                    fprintf(stderr, "[TS2-CHR] %s: needs slot 0-%d and chr 0-%d; skipped\n",
-                            c->title, r->roster_count - 1, r->def_count - 1);
+                if (ts2_chars_slot(r, i) < 0 || c->chr < 0 || c->chr >= r->def_count) {
+                    fprintf(stderr, "[TS2-CHR] %s: needs slot 0-%d or next (a free spare "
+                            "slot, %d-%d) and chr 0-%d; skipped\n", c->title,
+                            r->roster_count - 1, r->spare_first, r->roster_count - 1,
+                            r->def_count - 1);
                     continue;
                 }
                 ts2_char_apply(r, c);
+                applied++;
             }
+            if (applied)
+                ts2_chars_compact(r);
         }
         fflush(stderr);
     }
     main_fn();
+}
+
+/* sub_0008FAE0(list, item, rect) draws one item of the Select Character
+ * list: it looks the item's chr id (+0x18) up in the roster for the
+ * portrait, among the first 127 entries only (the bound is an imm8, which
+ * the XBE patches cannot raise; config/pal/xbe_patches.json). For an item
+ * whose character is further on, its entry and the last one in reach trade
+ * places for the call. The draw reads that one entry, by chr id, and keeps
+ * nothing. Without a mod's characters this only calls the game. */
+static void ts2_chars_item_draw(void (*draw)(void))
+{
+    const Ts2Roster *r = &k_ts2_roster;
+    uint32_t item, chr, a, b, t;
+    int i, k = -1;
+
+    if (!g_ts2_char_count || !r->roster || r->search_count >= r->roster_count) {
+        draw();
+        return;
+    }
+    item = TS2_MEM32(g_esp + 8);            /* [esp] is the return address */
+    chr = item ? TS2_MEM32(item + 0x18) : 0xFFFFFFFFu;
+    for (i = 0; i < r->roster_count && k < 0; i++)
+        if (TS2_MEM32(r->roster + (uint32_t)i * 0x20) == chr)
+            k = i;
+    if (k < r->search_count) {
+        draw();
+        return;
+    }
+    a = r->roster + (uint32_t)k * 0x20;
+    b = r->roster + (uint32_t)(r->search_count - 1) * 0x20;
+    for (i = 0; i < 0x20; i += 4) {
+        t = TS2_MEM32(a + i); TS2_MEM32(a + i) = TS2_MEM32(b + i); TS2_MEM32(b + i) = t;
+    }
+    draw();
+    for (i = 0; i < 0x20; i += 4) {
+        t = TS2_MEM32(a + i); TS2_MEM32(a + i) = TS2_MEM32(b + i); TS2_MEM32(b + i) = t;
+    }
 }
 
 /* The Gallery's grid: the build sets 14 columns and 9 rows after the fact.

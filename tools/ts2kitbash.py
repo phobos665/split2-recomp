@@ -1,16 +1,25 @@
 """Build new TimeSplitters 2 characters from a recipe: one character's body
 with another's head, recoloured, with a character-select preview and a
-portrait, laid out as a ts2mod source folder.
+portrait, laid out as a ts2mod source folder, with the declaration that puts
+them on the roster (ts2/characters.ini).
 
 A recipe is JSON:
 
   {"characters": [
     {"name": "Agent Static",
-     "slot": "chr71",                 the files it takes over (chr id 70)
+     "slot": "chr71", "chr_id": 70,   the files it takes over (chr id 70)
      "body": "chr69", "head": "chr133",
      "recolour": {"475": {"hue": 0.48, "sat": 0.85, "light": 1.25},
                   "472": {"tint": [0.72, 0.84, 0.92]}},
-     "portrait_colour": [0.1, 0.75, 0.7]}
+     "portrait_colour": [0.1, 0.75, 0.7],
+     "roster": "next",                a spare roster slot (127-158 on PAL), or
+                                      0-126 to replace the character there
+     "bio": "Two sentences.",         the Gallery's description
+     "background": "neo",             chrblank_<set>, shown while locked
+     "unlock": "start",               start, never, or keep (the slot's rule)
+     "stats": 68, "sounds": 68,       optional: this chr id's stats, voice
+     "names": {"fr": "..."},          optional: the name in fr, de, it, es
+     "bios": {"fr": "..."}}           optional: the description, likewise
   ]}
 
   - body and head name chr.pak models (ob/chrs/<name>.xbr); the head piece,
@@ -25,11 +34,12 @@ A recipe is JSON:
     l_101.pak, and l_102.pak and gun.pak, 64x64 DXT3) is rendered in Blender by
     tools/blender/ts2_portrait.py.
 
-Only chr.pak, chrinc.pak and l_101.pak are written (the paks/ form), so a
-level pak that carries the slot's original keeps it: pick slots no arcade
-pak carries (chr71-chr90, the NeoTokyo pedestrians, are only in
-l_38_ST.pak). The game-side declaration (name, roster slot, unlock) is
-separate.
+Only chr.pak, chrinc.pak and the portrait paks are written (the paks/
+form), so a level pak that carries the slot's original keeps it: pick slots
+no arcade pak carries (chr71-chr90, the NeoTokyo pedestrians, are only in
+l_38_ST.pak). ts2/characters.ini, which the game reads at start-up
+(docs/formats/roster.md, "Adding a character (mods)"), says which roster
+slot each one takes, its name, description, portrait and unlock rule.
 
   python3 -I tools/ts2kitbash.py <recipe.json> game/data <work dir> <mod source>
   python3 -I tools/ts2mod.py build <mod source> game/data <mod>
@@ -50,6 +60,11 @@ import ts2xbr  # noqa: E402
 import ts2xbt  # noqa: E402
 
 FIRST_NEW_TEXTURE = 8000
+LANGS = ("fr", "de", "it", "es")
+SETS = ("atom", "aztec", "circus", "gangster", "neo", "notredame", "planetx", "robot",
+        "siberia", "spacestation", "ts1", "west")
+INI_LINE = 500              # the game's reader takes lines of up to 511 bytes
+BIO_MAX = 390               # and keeps a description of up to 398
 PORTRAIT_BASE = "textures/misc/chrimage_ped3.xbt"     # header to copy (64x64 DXT3)
 PORTRAIT_PAKS = ("arcade/l_101.pak", "arcade/l_102.pak", "gun.pak")
 PREVIEW_LIMIT = 512000      # the front end loads a preview into a buffer this size
@@ -166,6 +181,60 @@ def build_character(c, ctx, next_id):
     return next_id
 
 
+def ini_value(c, key, value):
+    """One line of characters.ini: Latin-1 (the game's strings are), one
+    line, no ';' (the reader takes the rest of the line for a comment)."""
+    value = str(value)
+    try:
+        raw = value.encode("latin-1")
+    except UnicodeEncodeError:
+        raise SystemExit("%s: %s has characters outside Latin-1" % (c["name"], key))
+    if ";" in value or "\n" in value or len(key) + 3 + len(raw) > INI_LINE \
+            or (key.startswith("bio") and len(raw) > BIO_MAX):
+        raise SystemExit("%s: %s must be one line, without ';', of at most %d bytes"
+                         % (c["name"], key, BIO_MAX if key.startswith("bio") else INI_LINE))
+    return "%s = %s" % (key, value)
+
+
+def characters_ini(recipe):
+    """ts2/characters.ini for the recipe's characters, as
+    src/recomp_manual.c (ts2_chars_read) reads it."""
+    out = ["; TimeSplitters 2 (PAL), split2-recomp: the characters this mod adds,",
+           "; one [section] each, read at start-up from <mod>/ts2/characters.ini.",
+           "; Written by tools/ts2kitbash.py; docs/formats/roster.md has the keys.",
+           ";",
+           "; slot = next takes the next free spare roster slot (127-158); a",
+           "; number 0-126 replaces the character in that slot."]
+    for c in recipe["characters"]:
+        chr_id = c.get("chr_id", int(c["slot"][3:]) - 1)
+        if c["slot"] != "chr%02d" % (chr_id + 1):
+            raise SystemExit("%s: slot %s is not chr id %d's files (chr%02d)"
+                             % (c["name"], c["slot"], chr_id, chr_id + 1))
+        roster = c.get("roster", "next")
+        if roster != "next" and (not isinstance(roster, int) or roster < 0):
+            raise SystemExit("%s: roster must be \"next\" or a slot number" % c["name"])
+        if c.get("background") and c["background"] not in SETS:
+            raise SystemExit("%s: background must be one of %s" % (c["name"], ", ".join(SETS)))
+        if c.get("unlock", "start") not in ("start", "never", "keep"):
+            raise SystemExit("%s: unlock must be start, never or keep" % c["name"])
+        out += ["", "[%s]" % c["name"],
+                ini_value(c, "slot", roster),
+                ini_value(c, "chr", chr_id),
+                ini_value(c, "name", c["name"])]
+        out += [ini_value(c, "name." + l, c["names"][l]) for l in LANGS if l in c.get("names", {})]
+        if c.get("bio"):
+            out.append(ini_value(c, "bio", c["bio"]))
+        out += [ini_value(c, "bio." + l, c["bios"][l]) for l in LANGS if l in c.get("bios", {})]
+        out.append(ini_value(c, "portrait", "textures/misc/chrimage_%s.xbt" % c["slot"]))
+        if c.get("background"):
+            out.append(ini_value(c, "background", c["background"]))
+        out.append(ini_value(c, "unlock", c.get("unlock", "start")))
+        for key in ("stats", "sounds"):
+            if key in c:
+                out.append(ini_value(c, key, int(c[key])))
+    return "\n".join(out) + "\n"
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("recipe")
@@ -179,6 +248,7 @@ def main():
     slots = [c["slot"] for c in recipe["characters"]]
     if len(set(slots)) != len(slots):
         raise SystemExit("two characters in one slot")
+    ini = characters_ini(recipe)          # checked before anything is built
     ctx = {"work": a.work, "out": a.out, "blender": a.blender,
            "chr": unpack(os.path.join(a.data, "chr.pak"), os.path.join(a.work, "chr"))}
     fe = unpack(os.path.join(a.data, "fe_anim.pak"), os.path.join(a.work, "fe_anim"))
@@ -203,6 +273,9 @@ def main():
         next_id = build_character(c, ctx, next_id)
     with open(os.path.join(a.out, "characters.json"), "w") as f:
         json.dump(recipe, f, indent=1)
+    os.makedirs(os.path.join(a.out, "ts2"), exist_ok=True)
+    with open(os.path.join(a.out, "ts2", "characters.ini"), "w", encoding="latin-1") as f:
+        f.write(ini)
     print("%d characters written to %s" % (len(recipe["characters"]), a.out))
 
 

@@ -8,7 +8,10 @@ The game's files go in game/ at the root of this repository (default.xbe and
 the rest of the disc), or pass --game DIR.
 
 Which release the disc is -- PAL or USA -- is read from default.xbe's SHA-1,
-and the addresses for it come from config/<region>/.
+and the addresses for it come from config/<region>/. A release whose folder
+has an xbe_patches.json (PAL: the roster with room for added characters) is
+lifted from its default.xbe with those patches applied; the file on disc is
+only read (xboxrecomp docs/technical/xbe-patches.md).
 """
 
 import argparse
@@ -35,7 +38,8 @@ REGION_HEADER = ROOT / "src" / "recomp" / "ts2_region.h"
 #
 #   region    the folder under config/ with that release's seeds.json,
 #             xdk_symbols.json and overrides.inc (the addresses of the
-#             functions src/recomp_manual.c overrides)
+#             functions src/recomp_manual.c overrides), and xbe_patches.json
+#             when that release's XBE is patched before it is lifted
 #   work_dir  the pipeline's stage output, one per release, because it keeps
 #             per-address state between lifts (recomp/icall_sites.json)
 #
@@ -75,16 +79,18 @@ def xbe_entry_point(data: bytes) -> int:
     return raw ^ 0xA8FC57AB
 
 
-def lifted_sha1():
-    """The SHA-1 of the default.xbe src/recomp/gen was lifted from, or None
-    when the lift predates releases (it was the PAL one) or there is none."""
+def lifted_stamp(name: str):
+    """A SHA-1 the last lift wrote into src/recomp/ts2_region.h, or None:
+    TS2_XBE_SHA1, the default.xbe src/recomp/gen was lifted from (None when
+    the lift predates releases, which was the PAL one, or there is none), or
+    TS2_XBE_PATCHES_SHA1, the patch file it was lifted with (None: none)."""
     if not REGION_HEADER.is_file():
         return None
-    m = re.search(r'#define TS2_XBE_SHA1\s+"([0-9a-f]{40})"', REGION_HEADER.read_text())
+    m = re.search(r'#define %s\s+"([0-9a-f]{40})"' % name, REGION_HEADER.read_text())
     return m.group(1) if m else None
 
 
-def write_region_header(release: Release, digest: str, entry: int) -> None:
+def write_region_header(release: Release, digest: str, entry: int, patches) -> None:
     REGION_HEADER.parent.mkdir(parents=True, exist_ok=True)
     REGION_HEADER.write_text(
         "/* Written by scripts/build.py when it lifted src/recomp/gen from the\n"
@@ -96,7 +102,9 @@ def write_region_header(release: Release, digest: str, entry: int) -> None:
         f'#define TS2_REGION_NAME "{release.name}"\n'
         f'#define TS2_XBE_SHA1 "{digest}"\n'
         f"#define TS2_ENTRY_POINT 0x{entry:08X}u\n"
-        "#endif\n")
+        + (f"/* lifted with config/{release.region}/xbe_patches.json, this SHA-1 */\n"
+           f'#define TS2_XBE_PATCHES_SHA1 "{patches}"\n' if patches else "")
+        + "#endif\n")
 
 
 def write_manual_scan(release: Release) -> Path:
@@ -184,6 +192,12 @@ def main() -> int:
     else:
         print(f"TimeSplitters 2, {release.name} release (default.xbe SHA-1 {digest})")
     config = ROOT / "config" / release.region
+    # The release's XBE patches, if it has any (PAL: the roster grown for
+    # added characters). They change the image that is lifted, so the lift
+    # records the file's SHA-1, and a changed file means lifting again.
+    patch_file = config / "xbe_patches.json"
+    patches = (hashlib.sha1(patch_file.read_bytes()).hexdigest()
+               if patch_file.is_file() else None)
 
     # The toolkit lifts D3D8 replacements only when <xbe>_xdk_symbols.json
     # sits beside the XBE, and says nothing when it does not. This repository
@@ -204,15 +218,20 @@ def main() -> int:
     # A lift from before releases were told apart was of the PAL one.
     lifted = GEN.is_dir() and any(GEN.glob("*.c"))
     relift = args.relift or not lifted
-    before = lifted_sha1()
+    before = lifted_stamp("TS2_XBE_SHA1")
     if lifted and not relift:
-        if before is None and release.region == "pal":
-            write_region_header(release, digest, xbe_entry_point(data))
+        if before is None and release.region == "pal" and not patches:
+            write_region_header(release, digest, xbe_entry_point(data), None)
         elif before != digest:
             print(f"the generated sources were lifted from another default.xbe; "
                   f"lifting the {release.name} one")
             relift = True
             args.start = None
+        elif lifted_stamp("TS2_XBE_PATCHES_SHA1") != patches:
+            # The toolkit sees the changed image and starts again from parse.
+            print(f"config/{release.region}/xbe_patches.json is not what the "
+                  f"generated sources were lifted with; lifting again")
+            relift = True
 
     if relift:
         REGION_HEADER.unlink(missing_ok=True)
@@ -221,11 +240,15 @@ def main() -> int:
                 "--project", write_manual_scan(release),
                 "--gen-dir", GEN,
                 "--seeds", config / "seeds.json"]
+        # Always one or the other: without either, recompile.py would look
+        # for config/xbe_patches/4553000A.json, which cannot say which
+        # release it is for.
+        lift += (["--xbe-patches", patch_file] if patches else ["--no-xbe-patches"])
         if args.start:
             lift += ["--from", args.start]
         if not run(lift):
             return fail("the lift failed; see the output above")
-        write_region_header(release, digest, xbe_entry_point(data))
+        write_region_header(release, digest, xbe_entry_point(data), patches)
     else:
         print("generated sources exist; skipping the lift (--relift to redo it)")
 

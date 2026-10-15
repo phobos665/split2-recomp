@@ -34,6 +34,8 @@ The sections from "Experiment" on come from scripted runs.
      bytes, indexed by chr id: flags (hat sizes and others) and four floats;
   3. the **selectable roster** at `0x002BAC60`: 127 entries of 0x20 bytes, in
      select-screen order: chr id, portrait, set background, unlock condition.
+     The split2-recomp PAL build moves it (with 32 hidden spare slots) into a
+     section of its own before the lift: [Room for more characters](#room-for-more-characters-the-xbe-patch).
 - 126 roster entries are selectable (the 127th, entry 126, has unlock kind 0,
   "never"). The character grid is 14 columns by 9 rows = 126 cells, one page.
 - Unlocks are not stored per character. Each roster entry carries a
@@ -454,11 +456,11 @@ grow in place (code; layout measured).
 | Table | Size | Followed by | References | Hard-coded counts |
 |---|---|---|---|---|
 | Roster `0x002BAC60` | 127 x 0x20 | the default-character dwords at `0x002BBC40` | 26 code references in 15 functions (bases `0x2BAC60`, `0x2BAC64`, `0x2BAC6C`) | `0x7F` (127) at `0x00087AA8`, `0x00087AE8`, `0x0008E28C`, `0x0008FB6E`, `0x0009CCD8`; `0xFE0` (127 x 0x20) at `0x00087C32`, `0x00087C62`, `0x00087CC7`, `0x0009531B`, `0x00098F5E`, `0x0009946E`, `0x000A3D1C`; grid 14 x 9 at `0x00099C97`, `0x00099CA1` |
-| Unlock snapshot `0x0035C2D8` (BSS) | 127 dwords | `0x0035C4D4`, another global, immediately after | 2 | as the roster (`0xFE0` loop in `sub_000952C0`) |
+| Unlock snapshot `0x0035C2D8` (BSS) | 127 dwords | `0x0035C4D4`, another global, immediately after | 2 | as the roster (`0xFE0` loop in `sub_000952C0`), and `0x1FC` (127 x 4) at `0x00095504` in `sub_000954B0` |
 | Definitions `0x002AA060` | 162 x 0x44 | other data at `0x002ACB68` | 77 references in 38 functions | none found (no loop over all of them) |
 | Flags `0x002ACB78` | 161 x 0x14 | other data | 4 | none found |
 | Object list `0x002D8E14` | 1324 x 0x24 | other data | 29 (mostly `[idx*4 + 0x2D8E24]` after `lea idx, [i + i*8]`) | `0x52C` (1324) at `0x0001BD0D`, `0x000210D9`, `0x0006A98A` |
-| Texture list `0x002BF7B8` | 548 x 0x10 | other data | 7 | not checked |
+| Texture list `0x002BF7B0` (paths at +8) | 548 x 0x10 | another table at `0x002C19F0` | 36 (33 inside, 3 loop ends) | `0x224` at `0x000A9BEB` |
 | Strings `0x003362F0` | 5 languages x 2770 | | 1,370 | not checked |
 
 Chr ids themselves are not bounded: the player keeps a 16-bit id, the
@@ -608,6 +610,110 @@ by `rows * columns - n`, so a part-filled last row works. 127 entries in 15
 columns at 14/15 of the spacing fill 8 rows and 7 cells of a ninth, in the
 panel's old width (measured).
 
+## Room for more characters (the XBE patch)
+
+Every PAL lift applies `config/pal/xbe_patches.json` (written by
+`tools/ts2_roster_patches.py`; the format is xboxrecomp's
+`docs/technical/xbe-patches.md`). It adds a section, `TS2ROSTER` at
+`0x004CE000` (0x4000 bytes, after `dsstdfx`, the last one), moves three
+tables into it with room for **32 spare roster slots**, and repoints the
+code. `scripts/build.py` passes the file with the release (chosen by the
+XBE's SHA-1, as the seeds are) and writes its SHA-1 into
+`src/recomp/ts2_region.h` (`TS2_XBE_PATCHES_SHA1`); a changed file means a
+new lift. USA has no patch file and is lifted with `--no-xbe-patches`.
+
+| Table | Was | Now |
+|---|---|---|
+| Roster | 127 x 0x20 at `0x002BAC60` | 159 x 0x20 at `0x004CE000`, then a sentinel entry (chr id -1) |
+| Unlock snapshot | 127 dwords at `0x0035C2D8` (BSS) | 159 dwords at `0x004CF400` |
+| Texture list | 548 x 0x10 at `0x002BF7B0` | 580 x 0x10 at `0x004CF800` |
+
+The texture list's entries are how to load (+0), load flags (+4, which
+`sub_000A9B00` tests per level), path (+8) and handle (+0xC): the
+"548 entries of 0x10 at `0x002BF7B8`" above is the same table seen from
+its +8.
+
+**Why 32.** New characters take chr ids that have files and a definition
+but no roster entry (the 162-entry definition table does not grow): there
+are 35 of them, and only some are safe (chr71-chr90, the NeoTokyo
+pedestrians, are in no arcade pak). 32 covers all of those, keeps the
+Gallery legible (158 shown entries make 18 columns of 9 rows) and costs
+16 KB of image and nothing at run time. A different count is
+`tools/ts2_roster_patches.py --spare N` and a new lift, with the numbers in
+`config/pal/overrides.inc` changed to match.
+
+**The spare slots** are copies of the Consultant's entry (slot 126, the
+disc's one hidden character: chr id 92, gangster background, unlock kind 0)
+with a texture of their own, 548-579. Each spare texture entry names the
+Consultant's portrait with load flags 0, which no level loads. Kind 0 hides
+an entry everywhere: `sub_001AEE50` returns 0 for it before anything else
+(even the unlock-everything switches), and every screen and count below
+asks that function or the kind. So without a mod the game shows, counts and
+loads exactly what it did.
+
+### The 78 patched sites
+
+All found by scanning the PAL disassembly for operands inside each table or
+at its end, and every byte of `.text` for the tables' addresses (two hits
+were not operands but bytes across two instructions); then every function
+that touches the roster for the counts 0x7F, 0x7E, 0xFE0, 0xFC0, 0x1FC and
+0x1F8. No data in the image points into the three tables. The JSON gives
+each site's reason.
+
+| Sites | Count | What changes |
+|---|---|---|
+| Roster base, +4, +0xC (`sub_00087A90`, `87AD0`, `87C20`, `87CA0`, `8CED0`, `8DEE0`, `8FAE0`, `952C0`, `954B0`, `98E00`, `98F40`, `99430`, `99960`, `9CC00`, `A3C60`) | 26 | the new address |
+| Snapshot (`sub_000952C0`, `954B0`) | 2 | the new address |
+| `0xFE0` (127 x 0x20) loop ends: `0x00087C32`, `0x00087C62`, `0x00087CC7`, `0x0009531B`, `0x00098F5E`, `0x0009946E`, `0x000A3D1C` | 7 | 159 x 0x20 |
+| `0x1FC` (127 x 4) at `0x00095504`, the new-unlock announcement's loop over the snapshot (**not in the list above**) | 1 | 159 x 4 |
+| `cmp reg, 0x7F` in the chr id searches `0x00087AA8`, `0x00087AE8`, `0x0008E28C`, `0x0009CCD8` | 4 | `cmp dword ptr [ecx], -1`: see below |
+| Texture list: `sub_000A9AE0`-`000A9E70`, `000AA3A0`-`000AB2E0` (its fields by index, and the handles of eleven textures read directly) | 33 | the new address |
+| Texture list loop ends (`cmp esi, 0x2C19F4` / `0x2C19FC` in `sub_000A9C60`, `A9D20`, `A9D50`) | 3 | the new end |
+| `cmp eax, 0x224` (548) in `sub_000A9BE0`, load by index | 1 | 580 |
+| `and eax, 0x163` in `sub_000ED6F0`: the front end's menu items, 0x163 + 200 = 555 of 0x8C bytes | 1 | 0x1E3 (four more per spare slot: Select Character makes one item per unlocked character in each player's column, 4 x 127 already) |
+
+**The `0x7F` searches.** Five loops find a roster entry by chr id with the
+count as a sign-extended imm8 (`83 F8 7F`), which cannot hold more than
+127, and a patch may not change an instruction's length. In four of them
+`ecx` has just been moved to the next entry when the count is compared, so
+`cmp eax, 0x7F` becomes `cmp dword ptr [ecx], -1` (`83 39 FF`, the same
+length and mnemonic): the search stops at the sentinel after the last slot
+instead of at 127. The fifth, `sub_0008FAE0` at `0x0008FB6E`, keeps its
+pointer in `ebp`, and `[ebp]` needs a disp8 (4 bytes); it is left at 127
+and hooked (below). Spare slots carry chr id 92, never -1, and a search
+finds the first match, so the Consultant's own entry is found before them,
+as before.
+
+### What the hooks do
+
+In `src/recomp_manual.c` (addresses in `config/pal/overrides.inc`); none of
+it does anything without a mod's `ts2/characters.ini`:
+
+- **`sub_0008FAE0`** (`ts2_chars_item_draw`) draws one Select Character item
+  and looks its chr id up among the first 127 entries for the portrait. For
+  a character further on, its entry and entry 126 trade places for the call
+  and back. The draw reads that one entry by chr id and keeps nothing.
+- **The Gallery** draws the first n entries, n the number whose kind is not
+  0 (`sub_00098F40`), so a hidden slot among them would take a shown one's
+  cell: with characters in spare slots, the Consultant (126) sits between
+  the disc's characters and theirs. Once a mod's characters are in,
+  `ts2_chars_compact` moves the hidden entries behind the shown ones, in
+  order. Every list walks the table in order and skips hidden entries, so
+  no list changes order; nothing outside a screen keeps a roster index (the
+  profile, bot sets and players keep chr ids).
+- The Gallery's grid gets as many columns as nine rows need
+  (`sub_00099960`, `sub_00098F40`; unchanged).
+
+### Checked (scripted, macOS, 15 Oct 2026)
+
+Without a mod, the patched build against the unpatched one on the same
+input script: the Select Character list (first entry and its wrapped end,
+Capt Forest), Arcade Custom's menus, the Gallery (14 x 9, its cursor's wrap
+to the last cell), Player Options' "Complete 0.0%" and medal totals, and the
+saved profile (the same files; only the profile's random default name and
+its signature differ, as they do between any two runs). Story still reaches
+Siberia (`l_35_ST.pak`), with no unresolved indirect calls in any run.
+
 ## Adding a character (mods)
 
 What split2-recomp does, PAL only (`src/recomp_manual.c`, "extra playable
@@ -618,50 +724,63 @@ characters"; addresses in `config/pal/overrides.inc`). A mod folder for
 |---|---|
 | `data/chr.pak` | `ob/chrs/chr{id+1:02d}.xbr` replaced, and any new `textures/NNNN.xbt` it uses |
 | `data/chrinc.pak` | `ob/chrincs/chr{id+1:02d}.xbr`, the select screen's preview, textures inside |
-| `data/arcade/l_101.pak` | the portrait, `textures/misc/chrimage_<name>.xbt` (64x64 DXT3, as `chrimage_ped3.xbt`) |
+| `data/arcade/l_101.pak` | the portrait, `textures/misc/chrimage_<name>.xbt` (64x64 DXT3, as `chrimage_ped3.xbt`); `ts2kitbash` also puts it in `l_102.pak` and `gun.pak` |
 | `ts2/characters.ini` | the declaration, below |
 
-`tools/ts2mod.py build` makes the paks from a `paks/<pak>/<path>` source
-tree and copies `ts2/` across. Only the first `RECOMP_MODS` folder with a
-`ts2/characters.ini` is read (xboxrecomp `xbox_mods_find`).
+`tools/ts2kitbash.py` makes all of it from a recipe
+(`tools/examples/characters.json`: body, head, colours, and the roster slot,
+description, set and unlock), `ts2/characters.ini` included;
+`tools/ts2mod.py build` makes the paks from the `paks/<pak>/<path>` source
+tree and copies `ts2/` across:
+
+```bash
+python3 -I tools/ts2kitbash.py tools/examples/characters.json game/data <work> <source>
+python3 -I tools/ts2mod.py build <source> game/data <mod>
+RECOMP_MODS=<mod> ./split2_recomp
+```
+
+Only the first `RECOMP_MODS` folder with a `ts2/characters.ini` is read
+(xboxrecomp `xbox_mods_find`).
 
 ```ini
 [Agent Static]
-slot = 126                 ; roster entry 0-126 to take over
+slot = next                ; the next free spare slot (127-158); 0-126 replaces that character
 chr = 70                   ; chr id: model, definition, files chr71
 name = Agent Static        ; every language; name.fr / .de / .it / .es override
 bio = ...                  ; the Gallery's description (text 625 + chr); bio.fr ...
-portrait = textures/misc/chrimage_agentstatic.xbt
+portrait = textures/misc/chrimage_chr71.xbt
 background = neo           ; chrblank_<set> while locked (atom ... west)
 unlock = start             ; start (kind 1), never (0), keep (the slot's rule)
-stats = 61                 ; optional: copy definition +0x2C-+0x3C from this chr id
-sounds = 61                ; optional: copy the sound set (+0x04)
+stats = 68                 ; optional: copy definition +0x2C-+0x3C from this chr id
+sounds = 68                ; optional: copy the sound set (+0x04)
 ```
 
-Up to 8 sections. Before the game's `main` (`sub_000D99F0`) runs, each one
-writes the roster entry (chr id, kind, background), points its name's text
+Up to 48 sections. Before the game's `main` (`sub_000D99F0`) runs, each one
+writes its roster entry (chr id, kind, background), points its name's text
 id and its description's id at new strings in every language, points the
-slot's texture-list entry at the new portrait's path (so `chrimage_ped3.xbt`
-stays on the disc untouched), and copies the stats and sound set if asked.
-The Gallery hooks (`sub_00099960`, `sub_00098F40`) widen the grid when more
-entries are shown than 14 x 9 cells.
+slot's texture-list entry at the new portrait's path (a spare slot's entry
+also gets slot 0's portrait's load flags, so the front end loads it), and
+copies the stats and sound set if asked. `slot = next` takes the first
+spare slot no other section names; numbered slots are kept as given. Then
+the hidden entries are moved behind the shown ones (above). A value may not
+contain `;` (the reader takes the rest of the line for a comment).
 
 Which chr id: one that no arcade level pak carries, or that level's copy
 wins over `chr.pak`'s. chr ids 70-72 (`chr71`-`chr73`, NeoTokyo
 pedestrians) are only in `chr.pak` and `data/story/l_38_ST.pak` (NeoTokyo
 story, where the pedestrians walk), and `ob/chrincs/chr71`-`73.xbr` only in
 `chrinc.pak` (`tools/ts2mod.py where`). Replacing them changes the
-NeoTokyo story's pedestrians only if `l_38_ST.pak` is replaced too.
+NeoTokyo story's pedestrians only if `l_38_ST.pak` is replaced too. The
+same chr id in two entries shows the first one's portrait and unlock rule
+in both, so use one nobody plays.
 
-Checked in scripted runs (macOS, 15 Oct 2026): the name, portrait, stats
-and the `chrinc` preview on Select Character; the model in an arcade match
-and on the death camera; a section's name in "Killed by ..." and "First
-kill: ..."; the Gallery at 15 columns with the description; three sections
-at once (slots 124-126); and, with no mod, the Gallery's own 14 x 9 grid.
-
-Tied to the one spare slot: the roster has 127 entries and 126 are in use,
-so a second character takes over a playable one. A roster that grows needs
-the table moved and the `0x7F` / `0xFE0` counts patched (see "What adding a
-character would take"); the declaration, the name, portrait and description
-patches and the Gallery's column count already work for any number of
-entries.
+Checked in scripted runs (macOS, 15 Oct 2026), with the example recipe's
+three characters added in slots 127-129 and every character on the disc
+kept: all three at the end of the Select Character list after Capt Forest,
+each with its portrait, name, stats and `chrinc` preview; each selected and
+played in an Arcade Custom deathmatch, its model on the death camera; the
+Gallery at 15 columns with the three in the last row, cursor and name on
+them; and Story to Siberia with the mod loaded. Earlier (slot 126, the
+same name mechanism): a section's name in "Killed by ..." and "First kill:
+...". Not checked: the Available Bots list with added characters (its
+search is one of the four sentinel loops), four players at once.

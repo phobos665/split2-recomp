@@ -27,7 +27,7 @@ planned enhancement. TS2's share of it:
 | Widescreen | Done: the in-game camera is widened where it is built (`ts2_camera_setup` in `src/recomp_manual.c`), and the front end and HUD are placed by call site (each release's `k_ts2_ui_places`, in `config/<region>/overrides.inc`). Every screen is laid out for 16:9 |
 | Frame rate above 60 | Done by presenting above it: the toolkit's frame interpolation (`frame_interp`) draws the in-between frames while logic stays at 60. TS2 names its matrix registers (c60 projection, c64-c75) at its first present (`ts2_present` in `src/recomp_manual.c`). Leftovers are in `docs/enhancements.md` |
 | Online play | TS2 has System Link (LAN) and no Xbox Live. Done on Windows: the toolkit emulates the network card and hosts sessions over a LAN or the internet, and TS2 needed one seed (`0x0009D530`, PAL). macOS waits on the toolkit's card; USA is untried. `docs/multiplayer.md` |
-| Mods | Assets are in `data/*.pak`. Naming dumped textures by pak entry is this repo's job; the dump and replace is the toolkit's |
+| Mods | Assets are in `data/*.pak`. Naming dumped textures by pak entry is this repo's job; the dump and replace is the toolkit's. Characters a mod adds (PAL): `ts2/characters.ini` in the mod, read by `src/recomp_manual.c`, into 32 spare roster slots that `config/pal/xbe_patches.json` makes; `tools/ts2kitbash.py` builds one from a recipe (`docs/formats/roster.md`, "Adding a character (mods)") |
 | Cutscene skip | In-engine cutscenes: find where they start and whether the game already has a skip |
 
 **Working on the toolkit from here:** make the change in `xboxrecomp/` on a
@@ -100,6 +100,7 @@ config/<region>/        one release's addresses (pal, us):
   seeds.json            function entry points discovery cannot see
   xdk_symbols.json      XDK function names in that XBE (for the D3D8 replacements)
   overrides.inc         the functions recomp_manual.c wraps, by address, and its UI placement table
+  xbe_patches.json      PAL only: changes to the XBE made before the lift (the roster grown)
 game/                   the disc, supplied by the user        (ignored)
 src/recomp/gen/         the lifted C, i.e. game code           (ignored)
 src/recomp/ts2_region.h which release was lifted, written by build.py (ignored)
@@ -119,6 +120,7 @@ overrides are fine.
 py -3 scripts/build.py                        # lift if needed, then build
 py -3 scripts/build.py --relift               # after changing seeds, symbols, recomp_manual.c or the toolkit
 py -3 scripts/build.py --relift --from disasm # new seeds are applied by the disassembler, so start there
+                                              # (a changed xbe_patches.json sends it back to parse)
 cmake --build build --config Release          # recompile only
 ```
 
@@ -163,6 +165,17 @@ watchpoint switches.
   which it includes. The lifter reads only one file, as text, so `build.py` hands it
   the two as one (`.pipeline/.../manual/src/recomp_manual.c`): lift through
   `build.py`, not `recompile.py` directly.
+- `config/<region>/xbe_patches.json`, when the release has one, is applied to
+  the XBE before it is disassembled (xboxrecomp
+  `docs/technical/xbe-patches.md`); the player's `default.xbe` is only read
+  and the runtime patches its copy in memory. `build.py` passes it (USA:
+  `--no-xbe-patches`) and stamps its SHA-1 into `src/recomp/ts2_region.h`, so
+  a changed file is relifted. PAL's grows the character roster by 32 spare
+  slots; it is written by `tools/ts2_roster_patches.py`, and every site has
+  its reason in the file (`docs/formats/roster.md`, "Room for more
+  characters"). A patch may change operands, never an instruction's length:
+  what does not fit is hooked in `recomp_manual.c`. Write the reason beside
+  every patch, as beside every override.
 - A new unresolved `[ICALL]` target becomes a seed:
   `py -3 -m tools.seed_from_log <log> <xbe> --functions ../.pipeline/disasm/functions.json --seeds ../config/pal/seeds.json`
   (USA: `../.pipeline/us/disasm/functions.json`, `../config/us/seeds.json`),
