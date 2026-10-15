@@ -546,8 +546,12 @@ pieces), not with weights. New geometry must go in an existing piece and
 can only use that piece's bones. Materials and textures are the base's
 (a new texture is a new `.xbt` under an existing id: `tools/ts2xbt.py
 import`). `chrNNlod2.xbr` is a separate model with its own pieces: export,
-edit and import it too, or the character changes back at a distance. Level
-paks carry their own copies of the character, which `ts2mod` replaces.
+edit and import it too, or the character changes back at a distance (its
+piece tree differs, so the full model's `.glb` does not import over it). The
+character-select preview in `chrinc.pak` has the same pieces as the full
+model: import the same edited `.glb` over `ob/chrincs/chrNN.xbr` and it keeps
+its embedded textures (checked with `chr01`). Level paks carry their own
+copies of the character, which `ts2mod` replaces.
 
 **Tests** (`tools/test_ts2gltf.py`, not run by any build). `roundtrip` over
 all 314 files of `chr.pak` and all 155 of `chrinc.pak`: export and import
