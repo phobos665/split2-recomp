@@ -6,6 +6,13 @@ translates the game's code to C on your machine and compiles it against the
 [xboxrecomp](https://github.com/phobos665/xboxrecomp) toolkit. This repository
 contains no game code or data.
 
+
+<img width="796" height="468" alt="Screenshot 2026-10-20 at 09 31 50" src="https://github.com/user-attachments/assets/139ac55d-e26a-476b-83ad-5704bdab6acc" />
+
+
+Video:
+https://youtu.be/1foP74hN2uw
+
 ## What works
 
 - The front end, story mode and System Link deathmatch have been played.

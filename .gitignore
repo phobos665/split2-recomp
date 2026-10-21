@@ -16,3 +16,6 @@ xboxrecomp/
 # Local-only mod work: characters and assets that are not ours to publish
 # (docs/modding.md, "Keeping a character private").
 private/
+
+# macOS Finder files, at any depth ("./.DS_Store" matched nothing).
+.DS_Store
