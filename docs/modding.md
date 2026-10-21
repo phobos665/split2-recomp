@@ -3,7 +3,9 @@
 How to change a character, make a new one and add it to the game. Everything
 here starts from your own disc (`game/`), and every tool is in `tools/`. The
 file formats are in `docs/formats/` (`xbr.md` models, `xbt.md` textures,
-`roster.md` the roster and the game-side hooks).
+`roster.md` the roster and the game-side hooks). **New to this? Start with
+[blender-guide.md](blender-guide.md)**, a step-by-step guide to making a
+character in Blender and playing as it.
 
 PAL only so far. macOS is tested; Windows has not been built with these
 changes yet.
