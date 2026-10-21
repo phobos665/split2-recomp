@@ -224,7 +224,8 @@ def build_character(c, ctx):
 
 
 def ini_value(c, key, value):
-    """One line of characters.ini: Latin-1 (the game's strings are), one
+    """One line of characters.ini: characters Latin-1 has (the game's
+    strings are Latin-1; the file itself is UTF-8), one
     line, no ';' (the reader takes the rest of the line for a comment)."""
     value = str(value)
     try:
@@ -317,7 +318,9 @@ def main():
     with open(os.path.join(a.out, "characters.json"), "w") as f:
         json.dump(recipe, f, indent=1)
     os.makedirs(os.path.join(a.out, "ts2"), exist_ok=True)
-    with open(os.path.join(a.out, "ts2", "characters.ini"), "w", encoding="latin-1") as f:
+    # UTF-8, which the game's reader turns into its Latin-1 strings
+    # (ts2_to_latin1); ini_value has checked every value fits Latin-1.
+    with open(os.path.join(a.out, "ts2", "characters.ini"), "w", encoding="utf-8") as f:
         f.write(ini)
     ts2mod.write_manifest(a.out, {"made_by": "ts2kitbash", "characters": [c["name"] for c in recipe["characters"]]})
     print("%d characters written to %s, a mod: RECOMP_MODS=%s" % (len(recipe["characters"]), a.out, a.out))

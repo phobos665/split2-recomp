@@ -403,7 +403,7 @@ def cmd_loose(args):
 def read_ini_claims(path):
     """[(section, chr id, slot)] from a characters.ini, slot "next" or an int."""
     out, cur = [], None
-    for line in open(path, encoding="latin-1"):
+    for line in open(path, encoding="utf-8", errors="replace"):
         s = line.strip()
         if not s or s[0] in ";#":
             continue
@@ -416,10 +416,13 @@ def read_ini_claims(path):
         key, val = s.split("=", 1)
         val = val.split(";")[0].strip()
         key = key.strip()
-        if key == "chr":
-            cur["chr"] = int(val)
-        elif key == "slot":
-            cur["slot"] = "next" if val == "next" else int(val)
+        try:
+            if key == "chr":
+                cur["chr"] = int(val, 0)
+            elif key == "slot":
+                cur["slot"] = "next" if val == "next" else int(val, 0)
+        except ValueError:
+            cur["bad"] = "%s = %s is not a number" % (key, val)
     return out
 
 
@@ -480,6 +483,11 @@ def cmd_check(args):
             continue
         for c in read_ini_claims(ini):
             where = "[%s] in %s" % (c["title"], args.mods[k])
+            if c.get("bad") or c["chr"] is None or c["chr"] < 0:
+                problems += 1
+                print("CONFLICT: %s: %s; the game skips it"
+                      % (where, c.get("bad") or "it has no chr id"))
+                continue
             if c["chr"] in taken_chr:
                 problems += 1
                 print("CONFLICT: %s: chr id %s is already %s's; the game skips it"
