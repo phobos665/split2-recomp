@@ -3,7 +3,7 @@
 TimeSplitters 2 for the original Xbox, recompiled into a native program for
 Windows and macOS. You build it from your own copy of the game: the build
 translates the game's code to C on your machine and compiles it against the
-[xboxrecomp](https://github.com/phobos665/xboxrecomp) toolkit. This repository
+[DirectXbox-Recomp](https://github.com/phobos665/DirectXbox-Recomp) toolkit (`xboxrecomp/` here). This repository
 contains no game code or data.
 
 

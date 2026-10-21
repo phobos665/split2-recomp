@@ -31,7 +31,7 @@ planned enhancement. TS2's share of it:
 | Cutscene skip | In-engine cutscenes: find where they start and whether the game already has a skip |
 
 **Working on the toolkit from here:** make the change in `xboxrecomp/` on a
-branch, commit and push it **there** (`origin` is phobos665/xboxrecomp), then
+branch, commit and push it **there** (`origin` is phobos665/DirectXbox-Recomp, formerly phobos665/xboxrecomp), then
 commit the new submodule pin here. Never leave this repo pinned to a toolkit
 commit that exists only on this machine. `main` pins the toolkit's `main`
 (which has absorbed `feat/outrun2`'s movie and XGRA work); feature branches here
