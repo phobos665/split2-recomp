@@ -169,6 +169,16 @@ def main() -> int:
         return fail("Python package 'capstone' is missing. Run: py -3 -m pip install capstone")
     if not shutil.which("cmake") and not args.no_build:
         return fail("cmake is not on PATH")
+    # Linux distributions do not package DXC, the HLSL compiler the renderer
+    # needs, and without it the build quietly has no renderer: a black
+    # window. The toolkit fetches Microsoft's Linux release beside itself.
+    if sys.platform.startswith("linux") and not args.no_build:
+        sdk = os.environ.get("VULKAN_SDK", "")
+        dxc_found = ((TOOLKIT / "third_party" / "dxc" / "include" / "dxc" / "dxcapi.h").is_file()
+                     or (sdk and (Path(sdk) / "include" / "dxc" / "dxcapi.h").is_file()))
+        if not dxc_found:
+            return fail("DXC (the shader compiler) is missing, and without it the game "
+                        "has no picture.\n       Run: bash xboxrecomp/tools/linux/fetch_dxc.sh")
 
     # config/<region>/ holds addresses inside one particular default.xbe.
     # Another release puts its functions elsewhere, and lifting it with the

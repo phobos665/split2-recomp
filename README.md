@@ -1,7 +1,7 @@
 # split2-recomp
 
 TimeSplitters 2 for the original Xbox, recompiled into a native program for
-Windows and macOS. You build it from your own copy of the game: the build
+Windows, macOS and Linux (including SteamOS). You build it from your own copy of the game: the build
 translates the game's code to C on your machine and compiles it against the
 [DirectXbox-Recomp](https://github.com/phobos665/DirectXbox-Recomp) toolkit (`xboxrecomp/` here). This repository
 contains no game code or data.
@@ -25,7 +25,7 @@ https://youtu.be/1foP74hN2uw
   itself runs at 60.
 - Fullscreen and variable refresh rate (G-SYNC, FreeSync).
 - Controllers and keyboard, both rebindable.
-- System Link on Windows, over a LAN or the internet. Not on macOS yet.
+- System Link on Windows, over a LAN or the internet. Not on macOS or Linux yet.
 
 ## What you need
 
@@ -50,6 +50,41 @@ macOS on Apple Silicon:
   packages globally, so use a virtual environment:
   `python3 -m venv ~/.venvs/recomp && ~/.venvs/recomp/bin/pip install capstone`
 
+Linux, x86-64:
+
+- GCC or Clang, CMake 3.20 or newer, Ninja, pkg-config, Git, curl
+- Development headers for X11 and Wayland, PulseAudio or PipeWire, OpenSSL,
+  FreeType and fontconfig
+- Vulkan drivers (Mesa's RADV, ANV, or NVIDIA's own)
+- Python 3.10 or newer with `capstone`, in a virtual environment as on macOS:
+  `python3 -m venv ~/.venvs/recomp && ~/.venvs/recomp/bin/pip install capstone`
+
+On Debian or Ubuntu that is
+
+```sh
+sudo apt install build-essential cmake ninja-build pkg-config git curl python3-venv \
+    libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev \
+    libxfixes-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols \
+    libegl-dev libdrm-dev libgbm-dev libpulse-dev libasound2-dev libudev-dev \
+    libssl-dev libfreetype-dev libfontconfig-dev
+```
+
+SteamOS has no compiler, and its system is read-only, so build inside the
+Freedesktop SDK, which runs as a Flatpak and has all of the above. It is
+often installed already, because Flatpak apps such as VS Code use it; if
+`flatpak list` does not show `org.freedesktop.Sdk` 25.08, install it with
+`flatpak install flathub org.freedesktop.Sdk//25.08`. Open a shell in it from
+Konsole:
+
+```sh
+flatpak run --filesystem=home --share=network --device=dri \
+    --socket=wayland --socket=fallback-x11 --socket=pulseaudio \
+    --command=bash org.freedesktop.Sdk//25.08
+```
+
+and do everything below in that shell, venv included. The game it builds also
+runs outside it, straight from SteamOS.
+
 ## Build
 
 ```sh
@@ -60,28 +95,41 @@ cd split2-recomp
 Copy the extracted disc into a folder called `game`, so that `game/default.xbe`
 exists with `data/`, `music/` and the rest beside it. Then:
 
+On Linux, fetch the shader compiler first (once; distributions do not package
+it):
+
+```sh
+bash xboxrecomp/tools/linux/fetch_dxc.sh
+```
+
 ```sh
 py -3 scripts/build.py                     # Windows
-~/.venvs/recomp/bin/python scripts/build.py   # macOS
+~/.venvs/recomp/bin/python scripts/build.py   # macOS and Linux
 ```
 
 The first run translates the game, which takes a few minutes, then compiles
 it, which takes longer. Later runs only recompile. The program ends up in
 `build/Release/`:
 
-| | Windows | macOS |
+| | Windows | macOS and Linux |
 | --- | --- | --- |
 | The game | `split2_recomp.exe` | `split2_recomp` |
 | Settings window, then the game | `split2_recomp_launcher.exe` | `split2_recomp_launcher` |
+
+If your extracted games live somewhere else, `game` can be a link to the folder
+(`ln -s "/path/to/TimeSplitters 2" game`), or pass `--game DIR` to the build and
+set `RECOMP_GAME_DIR` when you play.
 
 If you cloned without `--recursive`, run `git submodule update --init --recursive`.
 
 ## Play
 
 Run the launcher (`split2_recomp_launcher.exe` on Windows, `split2_recomp_launcher`
-on macOS) to choose settings and play, or the game itself (`split2_recomp.exe`,
-`split2_recomp`) to start straight away. You can make a shortcut to either from
-anywhere.
+on macOS and Linux) to choose settings and play, or the game itself
+(`split2_recomp.exe`, `split2_recomp`) to start straight away. You can make a
+shortcut to either from anywhere. On SteamOS, add the launcher to Steam as a
+non-Steam game (Steam's "Add a Non-Steam Game" in desktop mode) to play it from
+Game Mode.
 
 | Key | |
 | --- | --- |
@@ -103,12 +151,12 @@ Controllers work as an Xbox pad. The keyboard plays as controller 1:
 Change them in the launcher's Input tab, or in `input_bindings.json` (format in
 `xboxrecomp/docs/technical/input-binding.md`).
 
-| | Windows | macOS |
-| --- | --- | --- |
-| Saves | `game\UDATA\4553000a\` | `game/UDATA/4553000a/` |
-| Settings | `%APPDATA%\xboxrecomp\titles\4553000A.conf` | `~/Library/Application Support/xboxrecomp/titles/4553000A.conf` |
-| Controls | `%APPDATA%\xboxrecomp\input_bindings.json` | `~/Library/Application Support/xboxrecomp/input_bindings.json` |
-| Log, when not started from a terminal | `build\Release\split2_recomp.log` | `build/Release/split2_recomp.log` |
+| | Windows | macOS | Linux |
+| --- | --- | --- | --- |
+| Saves | `game\UDATA\4553000a\` | `game/UDATA/4553000a/` | `game/UDATA/4553000a/` |
+| Settings | `%APPDATA%\xboxrecomp\titles\4553000A.conf` | `~/Library/Application Support/xboxrecomp/titles/4553000A.conf` | `~/.config/xboxrecomp/titles/4553000A.conf` |
+| Controls | `%APPDATA%\xboxrecomp\input_bindings.json` | `~/Library/Application Support/xboxrecomp/input_bindings.json` | `~/.config/xboxrecomp/input_bindings.json` |
+| Log, when not started from a terminal | `build\Release\split2_recomp.log` | `build/Release/split2_recomp.log` | `build/Release/split2_recomp.log` |
 
 ## Settings
 
@@ -135,8 +183,8 @@ To keep the front end at 4:3 between bars while the levels are 16:9, add
 
 ## System Link
 
-Windows only for now. On macOS the network card is not emulated yet, and
-the game finds no System Link games.
+Windows only for now. On macOS and Linux the network card is not emulated
+yet, and the game finds no System Link games.
 
 One player hosts a session and everyone else joins it. Up to 16 copies can be
 in one session. In the launcher's System Link tab:
@@ -190,13 +238,15 @@ git submodule update --init --recursive
 py -3 scripts/build.py --relift
 ```
 
-On macOS, use `~/.venvs/recomp/bin/python` in place of `py -3`. `--relift`
+On macOS and Linux, use `~/.venvs/recomp/bin/python` in place of `py -3`. `--relift`
 translates the game again, which is needed whenever the toolkit or `config/`
 changes.
 
 ## Problems
 
 - "no default.xbe in ...": the disc's files are not in `game/`.
+- Linux, "DXC (the shader compiler) is missing": run
+  `bash xboxrecomp/tools/linux/fetch_dxc.sh`, then build again.
 - A black window and nothing else: read the log (see [Play](#play)).
 - A rendering bug in one place: press F11 there, and attach the `.bmp` and
   `.d3dcap` files it writes to an issue.

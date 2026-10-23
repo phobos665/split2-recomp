@@ -83,6 +83,14 @@ through MoltenVK) and a scripted run plays to Siberia at 60 fps with no
 unresolved indirect calls. System Link is Windows-only: the toolkit's network
 card is not built off Windows yet.
 
+Linux (Oct 2026, toolkit and this repo on `feat/linux`): the PAL release
+builds on x86-64 Linux (on SteamOS inside the Freedesktop SDK Flatpak, whose
+binaries also run on SteamOS itself), and a scripted run plays to Siberia at
+60 fps with sound, on Wayland with RADV; the launcher works. On Linux
+`build.py` refuses to build without DXC (`xboxrecomp/tools/linux/fetch_dxc.sh`),
+since without it the game has no picture. System Link is not built there yet,
+and Game Mode (gamescope) is untried.
+
 One open issue: in one run out of two or three, the game has exited with code
 `0xFFFFFFFF` with no fault and no kernel call. `[EXIT]` lines in the log (the
 toolkit's exit trace) name the caller if it happens again.
