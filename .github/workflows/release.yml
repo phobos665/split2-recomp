@@ -1,7 +1,8 @@
 # A self-building release on every version tag (git tag v1.0 && git push
 # origin v1.0): the launcher, the toolkit's pipeline, a pinned compiler and
-# this repository's sources, as split2-<tag>-linux-x86_64.tar.xz and
-# split2-<tag>-macos-arm64.tar.xz on the tag's GitHub release. The player
+# this repository's sources, as split2-<tag>-linux-x86_64.tar.xz,
+# split2-<tag>-macos-arm64.tar.xz and split2-<tag>-windows-x86_64.zip on the
+# tag's GitHub release. The player
 # points the launcher at their own disc and it builds the game on their
 # machine (DirectXbox-Recomp's docs/technical/self-build-release.md).
 #
@@ -124,11 +125,50 @@ jobs:
           path: ${{ runner.temp }}/release/*.tar.xz
           retention-days: 3
 
-  # One job publishes, once both are built, so a tag never gets half a release.
+  # A folder with split2.exe, for 64-bit Windows 10 or 11. The player needs no
+  # Visual Studio: zig builds the game for MinGW against Windows' own DLLs.
+  windows:
+    name: Windows x86-64
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch the toolkit
+        run: |
+          git submodule update --init --depth 1 xboxrecomp
+          git -C xboxrecomp submodule update --init --depth 1 \
+            third_party/SDL third_party/Vulkan-Headers \
+            third_party/volk third_party/VulkanMemoryAllocator \
+            third_party/libsamplerate third_party/miniupnp
+          git -C xboxrecomp submodule update --init --recursive --depth 1 \
+            third_party/XbSymbolDatabase
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/downloads
+          key: release-downloads-windows-${{ hashFiles('xboxrecomp/tools/release/fetch_toolchain.py', 'xboxrecomp/tools/release/zigwrap.c') }}
+
+      - name: Make the release
+        working-directory: xboxrecomp
+        run: |
+          python -m tools.release.make_release ../release/split2.json \
+            --out "$RUNNER_TEMP/release/split2" --work "$RUNNER_TEMP/work" \
+            --cache "$RUNNER_TEMP/downloads" --version "$VERSION" --archive
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: split2-${{ env.VERSION }}-windows-x86_64
+          path: ${{ runner.temp }}/release/*.zip
+          retention-days: 3
+
+  # One job publishes, once all are built, so a tag never gets half a release.
   publish:
     name: Publish
     if: github.event_name == 'push'
-    needs: [linux, macos]
+    needs: [linux, macos, windows]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4
@@ -144,5 +184,5 @@ jobs:
           ls -l archives
           gh release view "$VERSION" >/dev/null 2>&1 || \
             gh release create "$VERSION" --title "$VERSION" --verify-tag \
-              --notes "Point the launcher at your own copy of TimeSplitters 2 (PAL or USA) and it builds the game on your machine, once. Linux: unpack split2-$VERSION-linux-x86_64.tar.xz and run ./split2. Mac (Apple Silicon, macOS 13 or later): unpack split2-$VERSION-macos-arm64.tar.xz, move TimeSplitters 2.app to Applications, and before opening it the first time run xattr -dr com.apple.quarantine \"/Applications/TimeSplitters 2.app\" in Terminal (it is not signed with an Apple Developer ID). See README.txt inside."
-          gh release upload "$VERSION" archives/*.tar.xz --clobber
+              --notes "Point the launcher at your own copy of TimeSplitters 2 (PAL or USA) and it builds the game on your machine, once. Linux: unpack split2-$VERSION-linux-x86_64.tar.xz and run ./split2. Windows (64-bit, 10 or 11): unzip split2-$VERSION-windows-x86_64.zip and run split2.exe (it is not signed: if Windows says it protected your PC, choose More info, Run anyway). Mac (Apple Silicon, macOS 13 or later): unpack split2-$VERSION-macos-arm64.tar.xz, move TimeSplitters 2.app to Applications, and before opening it the first time run xattr -dr com.apple.quarantine \"/Applications/TimeSplitters 2.app\" in Terminal (it is not signed with an Apple Developer ID). See README.txt inside."
+          gh release upload "$VERSION" archives/*.tar.xz archives/*.zip --clobber
