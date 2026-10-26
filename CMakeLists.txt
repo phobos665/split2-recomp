@@ -50,11 +50,24 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/recomp/ts2_region.h")
         "that was lifted. Run: py -3 scripts/build.py")
 endif()
 
-add_executable(${PROJECT_NAME}
+set(SPLIT2_SOURCES
     src/main.c
     src/recomp_manual.c
     ${RECOMP_GEN_SOURCES}
 )
+
+# On Android the game is libmain.so, which SDL's Java activity loads and
+# enters through SDL_main (the toolkit's src/host/android_main.c); main() is
+# renamed for it to call.
+if(ANDROID)
+    add_library(${PROJECT_NAME} SHARED ${SPLIT2_SOURCES})
+    set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME main)
+    set_source_files_properties(src/main.c PROPERTIES
+        COMPILE_DEFINITIONS main=recomp_title_main)
+    target_link_libraries(${PROJECT_NAME} PRIVATE xbox_android_main)
+else()
+    add_executable(${PROJECT_NAME} ${SPLIT2_SOURCES})
+endif()
 
 # A windowed program on Windows (WinMain, no console); a plain executable
 # elsewhere, whose main() hands the title its own thread (host_main_posix).
