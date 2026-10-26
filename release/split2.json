@@ -10,5 +10,6 @@
     {"sha1": "3ec95fe3ae9e7794d83a5b489ad8583f352e0c18", "name": "USA", "config": "config/us"}
   ],
   "lift": ["scripts/build.py", "--game", "{xbe_dir}", "--no-build", "--relift"],
-  "placeholders": ["src/recomp/ts2_region.h"]
+  "placeholders": ["src/recomp/ts2_region.h"],
+  "android": {"package": "org.directxboxrecomp.timesplitters2", "label": "TimeSplitters 2"}
 }
