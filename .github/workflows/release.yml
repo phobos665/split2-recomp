@@ -231,6 +231,7 @@ jobs:
           ANDROID_SIGNING_KEY: ${{ secrets.ANDROID_SIGNING_KEY }}
           ANDROID_SIGNING_PASSWORD: ${{ secrets.ANDROID_SIGNING_PASSWORD }}
         run: |
+          mkdir -p "$RUNNER_TEMP/release"
           read -r PACKAGE LABEL < <(python3 -c 'import json; a = json.load(open("release/split2.json"))["android"]; print(a["package"], a["label"])')
           python3 xboxrecomp/tools/android/build_apk.py --project . \
             --recipe release/split2.json --package "$PACKAGE" --label "$LABEL" \
