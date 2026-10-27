@@ -19,6 +19,10 @@ on:
       version:
         description: "Version to build (a dry run: nothing is published)"
         default: "dev"
+      sign:
+        description: "Sign the APK with the release key, so it installs over a release (off: a throwaway key)"
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -210,9 +214,10 @@ jobs:
             third_party/XbSymbolDatabase
 
       # A tag's APK must carry the release key: one signed with a throwaway
-      # key would not install over the last release.
+      # key would not install over the last release. So must a dry run's
+      # when it is asked to be signed (the default), to test the whole flow.
       - name: Check the signing key
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || inputs.sign
         env:
           ANDROID_SIGNING_KEY: ${{ secrets.ANDROID_SIGNING_KEY }}
           ANDROID_SIGNING_PASSWORD: ${{ secrets.ANDROID_SIGNING_PASSWORD }}
@@ -246,10 +251,11 @@ jobs:
             xboxrecomp/third_party/android/capstone/src \
             xboxrecomp/third_party/android/capstone/build
 
+      # Without the key, make_apk signs with a key of its own.
       - name: Make the APK
         env:
-          ANDROID_SIGNING_KEY: ${{ secrets.ANDROID_SIGNING_KEY }}
-          ANDROID_SIGNING_PASSWORD: ${{ secrets.ANDROID_SIGNING_PASSWORD }}
+          ANDROID_SIGNING_KEY: ${{ (github.event_name == 'push' || inputs.sign) && secrets.ANDROID_SIGNING_KEY || '' }}
+          ANDROID_SIGNING_PASSWORD: ${{ (github.event_name == 'push' || inputs.sign) && secrets.ANDROID_SIGNING_PASSWORD || '' }}
         run: |
           mkdir -p "$RUNNER_TEMP/release"
           read -r PACKAGE LABEL < <(python3 -c 'import json; a = json.load(open("release/split2.json"))["android"]; print(a["package"], a["label"])')
