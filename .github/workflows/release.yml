@@ -65,6 +65,14 @@ jobs:
           path: ${{ runner.temp }}/downloads
           key: release-downloads-${{ hashFiles('xboxrecomp/tools/release/fetch_toolchain.py') }}
 
+      # zig's own cache: the C runtime and compiler-rt it builds from source
+      # the first time it links for a target. Content-addressed by zig, so a
+      # kept entry is never stale; saved once per toolchain.
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/work/zig-cache
+          key: release-zig-cache-linux-${{ hashFiles('xboxrecomp/tools/release/fetch_toolchain.py', 'xboxrecomp/tools/release/zigwrap.c') }}
+
       - name: Make the release
         working-directory: xboxrecomp
         run: |
@@ -112,6 +120,11 @@ jobs:
           path: ${{ runner.temp }}/downloads
           key: release-downloads-macos-${{ hashFiles('xboxrecomp/tools/release/fetch_toolchain.py') }}
 
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/work/zig-cache
+          key: release-zig-cache-macos-${{ hashFiles('xboxrecomp/tools/release/fetch_toolchain.py', 'xboxrecomp/tools/release/zigwrap.c') }}
+
       - name: Make the release
         working-directory: xboxrecomp
         run: |
@@ -150,6 +163,13 @@ jobs:
         with:
           path: ${{ runner.temp }}/downloads
           key: release-downloads-windows-${{ hashFiles('xboxrecomp/tools/release/fetch_toolchain.py', 'xboxrecomp/tools/release/zigwrap.c') }}
+
+      # On Windows zig's cache is MinGW's runtime, built again for every new
+      # set of CPU features: the compiler checks took 14 minutes of a cold run.
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/work/zig-cache
+          key: release-zig-cache-windows-${{ hashFiles('xboxrecomp/tools/release/fetch_toolchain.py', 'xboxrecomp/tools/release/zigwrap.c') }}
 
       - name: Make the release
         working-directory: xboxrecomp
