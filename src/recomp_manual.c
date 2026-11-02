@@ -559,6 +559,133 @@ static int ts2_menus_wide(void)
  */
 extern void xbox_D3D8SetInterpRegisters(int projection, int affine_first, int affine_count);
 
+/* ── TimeSplitters 2: game speed above 60 fps ──────────────────── */
+
+/*
+ * TimeSplitters 2 steps its world by whole vblanks. Each frame,
+ * frame_timing_update (sub_001AE3C0 in PAL) counts the vblanks since the last
+ * frame, clamps the count to 1..3 and writes it as the step: an int and a
+ * float, each in a "real" copy and a "game" copy that is 0 while the clock
+ * is held. It also adds the real step to a running total and to the
+ * time-of-day clock. 318 functions scale by the float step, 204 by the int
+ * one; there is no other clock. So it can run below 60 at the right speed
+ * (a step of 2 at 30 fps, the console's own path) but not above: a frame
+ * with no vblank since the last still counts as one, and uncapped it runs
+ * fast.
+ *
+ * Above 60 -- the frame cap off, or a host-clocked cap (120, 144) -- the step
+ * the next frame will use is rewritten after the present, from the host's
+ * clock: the float step is the elapsed time in 60ths of a second, clamped to
+ * 0.1..3, and the int step takes whole ticks from an accumulator, so at 120
+ * fps it is 0 and 1 by turns and its total keeps pace with real time. The
+ * two clocks the game advanced by its own step are corrected by the
+ * difference. At 60 and below nothing changes.
+ *
+ * Left alone: a held clock (paused), and in-engine cutscenes (the sequence
+ * object at k_ts2_step.sequence), which are scripted per frame and are held
+ * to the vblank instead (xbox_Nv2aFlipGateHoldVblank), so they play at 60
+ * whatever the cap. Six functions divide by the int step and would fault on
+ * its 0; each is wrapped (ts2_step_guard) to see 1 instead, as at 60.
+ * RECOMP_TS2_FREE_STEP=0 turns all of this off.
+ */
+typedef struct Ts2StepAddrs {
+    uint32_t real_int, game_int, real_float, game_float;   /* the step's four copies */
+    uint32_t total, time_of_day;   /* advanced by the real step */
+    uint32_t held;                 /* the clock is held: the game step is 0 */
+    uint32_t sequence;             /* the in-engine cutscene object, or 0 */
+} Ts2StepAddrs;
+
+/* Each release's, in its config/<region>/overrides.inc; real_int 0 means not
+ * found, and the step is left as the game makes it. */
+extern const Ts2StepAddrs k_ts2_step;
+
+extern int64_t     host_time_ns(void);
+extern const char *xbox_Nv2aFlipGateModeName(void);
+extern void        xbox_Nv2aFlipGateHoldVblank(int on);
+
+/* Guest memory, as the rest of this file reaches it. */
+#define TS2_M32(va) (*(volatile uint32_t *)((uintptr_t)(va) + g_xbox_mem_offset))
+#define TS2_MF(va)  (*(volatile float *)((uintptr_t)(va) + g_xbox_mem_offset))
+
+static int g_ts2_step_free;       /* this frame's step was rewritten */
+
+/* Whether the cap lets frames come faster than the vblank. */
+static int ts2_cap_above_vblank(void)
+{
+    const char *m = xbox_Nv2aFlipGateModeName();
+
+    return m && (!strcmp(m, "off") || atoi(m) > 60);
+}
+
+static void ts2_free_step(void)
+{
+    static int on = -1;
+    static int64_t last;
+    static double ticks;
+    const Ts2StepAddrs *A = &k_ts2_step;
+    int64_t now = host_time_ns();
+    double elapsed = last ? (double)(now - last) * 1e-9 : 1.0 / 60.0;
+    int above, cutscene;
+
+    last = now;
+    g_ts2_step_free = 0;
+    if (on < 0) {
+        const char *v = getenv("RECOMP_TS2_FREE_STEP");
+        on = A->real_int && !(v && v[0] == '0');
+        fprintf(stderr, "[TS2-STEP] game speed above 60 fps: %s\n",
+                !A->real_int ? "not found in this release"
+                : on ? "follows the clock (RECOMP_TS2_FREE_STEP=0: vblank steps)"
+                     : "vblank steps (RECOMP_TS2_FREE_STEP=0)");
+    }
+    if (!on)
+        return;
+    above = ts2_cap_above_vblank();
+    cutscene = TS2_M32(A->sequence) != 0u;
+    xbox_Nv2aFlipGateHoldVblank(above && cutscene);
+    if (!above || cutscene || TS2_M32(A->held) != 0u) {
+        ticks = 0.0;
+        return;
+    }
+    {
+        double step = elapsed * 60.0;
+        int whole, old_real = (int)TS2_M32(A->real_int);
+        uint32_t tod;
+
+        if (step < 0.1)
+            step = 0.1;
+        if (step > 3.0)
+            step = 3.0;
+        ticks += step;
+        whole = (int)ticks;
+        if (whole > 3)
+            whole = 3;
+        ticks -= whole;
+        TS2_MF(A->real_float) = (float)step;
+        TS2_MF(A->game_float) = (float)step;
+        TS2_M32(A->real_int) = (uint32_t)whole;
+        TS2_M32(A->game_int) = (uint32_t)whole;
+        TS2_M32(A->total) += (uint32_t)(whole - old_real);
+        tod = TS2_M32(A->time_of_day) + (uint32_t)(whole - old_real);
+        TS2_M32(A->time_of_day) = (int32_t)tod < 0 ? 0u : tod;
+        g_ts2_step_free = 1;
+    }
+}
+
+/* A function that divides by the int step: at 120 fps the step is 0 every
+ * other frame, and the division would fault. It sees 1, as it would at 60. */
+static void ts2_step_guard(void (*body)(void))
+{
+    const Ts2StepAddrs *A = &k_ts2_step;
+
+    if (g_ts2_step_free && TS2_M32(A->game_int) == 0u) {
+        TS2_M32(A->game_int) = 1u;
+        body();
+        TS2_M32(A->game_int) = 0u;
+        return;
+    }
+    body();
+}
+
 static void ts2_present(void (*present)(void))
 {
     static int interp_said;
@@ -568,6 +695,7 @@ static void ts2_present(void (*present)(void))
         xbox_D3D8SetInterpRegisters(60, 64, 12);
     }
     present();
+    ts2_free_step();
     xbox_D3D8SetWideFrames(ts2_menus_wide() ||
                            (g_ts2_frame_camera && !g_ts2_frame_front_end));
     g_ts2_frame_camera = g_ts2_frame_front_end = 0;

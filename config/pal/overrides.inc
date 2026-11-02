@@ -20,6 +20,31 @@ void sub_00032DC0(void) { ts2_camera_setup(sub_00032DC0_gen); }
 extern void sub_0009F1C0_gen(void);
 void sub_0009F1C0(void) { ts2_front_end_scene(sub_0009F1C0_gen); }
 
+/* The frame's step (ts2_free_step): frame_timing_update, sub_001AE3C0,
+ * writes the real step at 0x348CE0 (int) and 0x348CE8 (float) and the game
+ * step at 0x348CE4 and 0x348CEC, adds the real step to the running total at
+ * 0x40BE94 and, through sub_00169060, to the time-of-day clock at 0x3EFD5C.
+ * 0x40BE98 holds the clock (sub_001AE550). The in-engine cutscene object is
+ * at 0x356BB0: made by sub_00051680, cleared by sub_00051650. */
+const Ts2StepAddrs k_ts2_step = {
+    0x348CE0u, 0x348CE4u, 0x348CE8u, 0x348CECu, 0x40BE94u, 0x3EFD5Cu, 0x40BE98u, 0x356BB0u
+};
+
+/* The functions that divide by the int step (ts2_step_guard). sub_000B3E50
+ * also reads it but tests for 0 first. */
+extern void sub_00025950_gen(void);
+void sub_00025950(void) { ts2_step_guard(sub_00025950_gen); }
+extern void sub_000DB8A0_gen(void);
+void sub_000DB8A0(void) { ts2_step_guard(sub_000DB8A0_gen); }
+extern void sub_001715C0_gen(void);
+void sub_001715C0(void) { ts2_step_guard(sub_001715C0_gen); }
+extern void sub_0018CA50_gen(void);
+void sub_0018CA50(void) { ts2_step_guard(sub_0018CA50_gen); }
+extern void sub_0019F3D0_gen(void);
+void sub_0019F3D0(void) { ts2_step_guard(sub_0019F3D0_gen); }
+extern void sub_001A2C40_gen(void);
+void sub_001A2C40(void) { ts2_step_guard(sub_001A2C40_gen); }
+
 /* present is sub_001CC530, the once-a-frame present (it calls
  * D3DDevice_Swap). */
 extern void sub_001CC530_gen(void);

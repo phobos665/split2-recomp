@@ -49,6 +49,14 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/recomp/ts2_region.h")
     message(FATAL_ERROR "src/recomp/ts2_region.h is missing: it names the release "
         "that was lifted. Run: py -3 scripts/build.py")
 endif()
+# The PAL release steps its world by real time above 60 fps (ts2_free_step in
+# src/recomp_manual.c), so the launcher and F10 offer 120, 144 and uncapped
+# for it. The US release's step has not been found: it would run fast above
+# 60, so it is offered 60, 30 and adaptive only.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/recomp/ts2_region.h" TS2_REGION_H)
+if(TS2_REGION_H MATCHES "TS2_REGION_PAL")
+    recomp_title_timing(DELTA)
+endif()
 
 set(SPLIT2_SOURCES
     src/main.c

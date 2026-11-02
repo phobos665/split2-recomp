@@ -225,3 +225,7 @@ const Ts2Roster k_ts2_roster = { 0 };
  * not served; whole data/*.pak files in a mod still are (the toolkit's
  * RECOMP_MODS). PAL's are in config/pal/overrides.inc. */
 const Ts2Paks k_ts2_paks = { 0 };
+
+/* The frame's step: not found in this release yet (real_int 0), so above 60
+ * fps it still runs fast. PAL's are in config/pal/overrides.inc. */
+const Ts2StepAddrs k_ts2_step = { 0 };
