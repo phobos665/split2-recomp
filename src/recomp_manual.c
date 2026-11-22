@@ -673,6 +673,49 @@ static RECOMP_MANUAL_TLS int      g_ts2_depth;
 
 #define TS2_MEM32(a) (*(volatile uint32_t *)((uintptr_t)(uint32_t)(a) + g_xbox_mem_offset))
 
+/* The reticle retains its 4:3 layout when the gameplay camera widens.
+ * Undo the camera widening for the aiming ray. RECOMP_TS2_AIM_WIDTH
+ * can override the scale for testing.
+ *
+ * Camera pointer: US global 0x004B2F60; horizontal projection at camera+0x320.
+ * The original value is restored before returning to the rest of the game.
+ */
+static void ts2_aim_projection(void (*aim_update)(void))
+{
+    static int initialized;
+    static float width_override;
+    float widen = ts2_camera_widen();
+    float width_scale;
+    uint32_t camera;
+    float original;
+
+    if (!initialized) {
+        const char *s = getenv("RECOMP_TS2_AIM_WIDTH");
+        if (s && *s) {
+            char *end;
+            float n = strtof(s, &end);
+            if (*end == '\0' && n >= 0.4f && n <= 1.5f)
+                width_override = n;
+        }
+        initialized = 1;
+    }
+    width_scale = width_override ? width_override : 1.0f / widen;
+    if (widen == 1.0f || width_scale == 1.0f) {
+        aim_update();
+        return;
+    }
+
+    camera = TS2_MEM32(0x004B2F60u);
+    if (!camera) {
+        aim_update();
+        return;
+    }
+    original = TS2_MEMF(camera + 0x320u);
+    TS2_MEMF(camera + 0x320u) = original * width_scale;
+    aim_update();
+    TS2_MEMF(camera + 0x320u) = original;
+}
+
 static int ts2_ui_parse_place(const char *s)
 {
     if (!strncmp(s, "stretch", 7)) return TS2_UI_STRETCH;
