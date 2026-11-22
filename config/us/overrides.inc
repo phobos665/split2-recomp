@@ -84,7 +84,57 @@ void sub_001C0F18(void) { ts2_ui_enter(); sub_001C0F18_gen(); ts2_ui_leave(); }
 extern void sub_001B5A70_gen(void);   /* PAL 0x001B5E80, -0x410 */
 void sub_001B5A70(void) { ts2_ui_enter(); sub_001B5A70_gen(); ts2_ui_leave(); }
 extern void sub_001B54D0_gen(void);   /* PAL 0x001B58E0, -0x410 */
-void sub_001B54D0(void) { ts2_ui_enter(); sub_001B54D0_gen(); ts2_ui_leave(); }
+/* The two scope renderers use this untextured gradient quad for the eight
+ * pieces between the lens and the player viewport. The lens uses the
+ * renderer's centred 2D transform. Apply that transform to the inner
+ * endpoints only, leaving the mask's outer endpoints on the viewport. */
+extern int d3d8_display_wide_now(void);
+extern unsigned d3d8_GetGuestWidth(void);
+extern unsigned d3d8_GetGuestHeight(void);
+
+static void ts2_scope_mask_quad(uint32_t site)
+{
+    uint32_t args = g_esp + 4u;
+    uint32_t viewport = TS2_MEM32(0x00483F28u);
+    float left = (float)(int32_t)TS2_MEM32(viewport);
+    float right = (float)(int32_t)TS2_MEM32(viewport + 4u);
+    unsigned guest_w = d3d8_GetGuestWidth();
+    unsigned guest_h = d3d8_GetGuestHeight();
+    float centre = guest_w * 0.5f;
+    uint32_t saved_left = TS2_MEM32(args);
+    uint32_t saved_right = TS2_MEM32(args + 8u);
+
+    if (guest_w && guest_h && ts2_ui_place_for(site) == TS2_UI_STRETCH) {
+        /* Match two_d_squeeze in the pinned renderer: gameplay presents at 16:9. */
+        float scale = ((float)guest_w * 9.0f) / ((float)guest_h * 16.0f);
+        if (scale >= 1.0f) {
+            sub_001B54D0_gen();
+            return;
+        }
+        float x = TS2_MEMF(args);
+        if (x != left && x != right)
+            TS2_MEMF(args) = centre + (x - centre) * scale;
+        x = TS2_MEMF(args + 8u);
+        if (x != left && x != right)
+            TS2_MEMF(args + 8u) = centre + (x - centre) * scale;
+    }
+    sub_001B54D0_gen();
+    TS2_MEM32(args) = saved_left;
+    TS2_MEM32(args + 8u) = saved_right;
+}
+
+void sub_001B54D0(void)
+{
+    uint32_t site = TS2_MEM32(g_esp);
+    ts2_ui_enter();
+    if (((site >= 0x000C2F37u && site <= 0x000C3050u) ||
+         (site >= 0x000C3AFAu && site <= 0x000C3C13u)) &&
+        g_ts2_depth == 1 && d3d8_display_wide_now())
+        ts2_scope_mask_quad(site);
+    else
+        sub_001B54D0_gen();
+    ts2_ui_leave();
+}
 extern void sub_001B6610_gen(void);   /* PAL 0x001B6A20, -0x410 */
 void sub_001B6610(void) { ts2_ui_enter(); sub_001B6610_gen(); ts2_ui_leave(); }
 extern void sub_001B75F0_gen(void);   /* PAL 0x001B7A00, -0x410 */
@@ -203,6 +253,36 @@ const Ts2UiPlace k_ts2_ui_places[] = {
     { 0x000BE5CF, TS2_UI_SIDE },
     { 0x000BC2AC, TS2_UI_CENTRE }, { 0x00058610, TS2_UI_CENTRE },
     { 0x000C92DF, TS2_UI_STRETCH },
+    /* Zoom optics: screen shade gradients with prepositioned lens edges,
+     * and the two viewport-sized tint passes. */
+    { 0x000C2F37, TS2_UI_STRETCH }, { 0x000C2F62, TS2_UI_STRETCH },
+    { 0x000C2F88, TS2_UI_STRETCH }, { 0x000C2FAF, TS2_UI_STRETCH },
+    { 0x000C2FD6, TS2_UI_STRETCH }, { 0x000C2FFD, TS2_UI_STRETCH },
+    { 0x000C3025, TS2_UI_STRETCH }, { 0x000C3050, TS2_UI_STRETCH },
+    { 0x000C3AFA, TS2_UI_STRETCH }, { 0x000C3B25, TS2_UI_STRETCH },
+    { 0x000C3B4B, TS2_UI_STRETCH }, { 0x000C3B72, TS2_UI_STRETCH },
+    { 0x000C3B99, TS2_UI_STRETCH }, { 0x000C3BC0, TS2_UI_STRETCH },
+    { 0x000C3BE8, TS2_UI_STRETCH }, { 0x000C3C13, TS2_UI_STRETCH },
+    { 0x000C31F3, TS2_UI_STRETCH }, { 0x000C3D32, TS2_UI_STRETCH },
+    /* Lens corners, centre markings and the alpha rectangle inside the lens. */
+    { 0x000C2F03, TS2_UI_CENTRE },
+    { 0x000C3096, TS2_UI_CENTRE }, { 0x000C30BF, TS2_UI_CENTRE },
+    { 0x000C30E8, TS2_UI_CENTRE }, { 0x000C312B, TS2_UI_CENTRE },
+    { 0x000C3147, TS2_UI_CENTRE }, { 0x000C3166, TS2_UI_CENTRE },
+    { 0x000C3182, TS2_UI_CENTRE },
+    { 0x000C32D1, TS2_UI_CENTRE }, { 0x000C32EA, TS2_UI_CENTRE },
+    { 0x000C3306, TS2_UI_CENTRE }, { 0x000C331F, TS2_UI_CENTRE },
+    { 0x000C34B2, TS2_UI_CENTRE }, { 0x000C34D2, TS2_UI_CENTRE },
+    { 0x000C34E7, TS2_UI_CENTRE }, { 0x000C3503, TS2_UI_CENTRE },
+    { 0x000C3520, TS2_UI_CENTRE }, { 0x000C353B, TS2_UI_CENTRE },
+    { 0x000C354E, TS2_UI_CENTRE }, { 0x000C360C, TS2_UI_CENTRE },
+    { 0x000C3C4F, TS2_UI_CENTRE }, { 0x000C3C78, TS2_UI_CENTRE },
+    { 0x000C3C9E, TS2_UI_CENTRE }, { 0x000C3CC4, TS2_UI_CENTRE },
+    { 0x000C3D66, TS2_UI_CENTRE }, { 0x000C3D77, TS2_UI_CENTRE },
+    { 0x000C3D8D, TS2_UI_CENTRE }, { 0x000C3D9F, TS2_UI_CENTRE },
+    { 0x000C3DF2, TS2_UI_CENTRE }, { 0x000C3E0A, TS2_UI_CENTRE },
+    { 0x000C3E1C, TS2_UI_CENTRE }, { 0x000C3E37, TS2_UI_CENTRE },
+    { 0x000C3E49, TS2_UI_CENTRE },
     /* Sprites the game places in the world and projects to the screen
      * itself (the brazier's flame, muzzle flashes): they were projected
      * through the widened camera, so they are already where the 3D is and
