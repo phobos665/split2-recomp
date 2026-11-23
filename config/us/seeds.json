@@ -34,5 +34,20 @@
  {
   "start": "0x00073CE0",
   "note": "Indirect-call target observed at runtime; decodes as a function body."
+ },
+ {
+  "start": "0x000734F0",
+  "observed": true,
+  "note": "Story actor target selector called indirectly at 0x0005D923 through actor definition +0x48 in Siberia and Planet X."
+ },
+ {
+  "start": "0x001584E0",
+  "observed": true,
+  "note": "Slot 2 update registered at 0x0017C8B2 and 0x0018A0E7. The Planet X scheduler calls it at 0x0015415C for canyondoorb.xbr."
+ },
+ {
+  "start": "0x000D0BB0",
+  "observed": true,
+  "note": "Restart/retry from checkpoint menu action installed at 0x000D509F and 0x000D6C11. Observed at the menu dispatch 0x000F1F46. Tail-calls 0x000A6D90 with the active player's checkpoint."
  }
 ]
