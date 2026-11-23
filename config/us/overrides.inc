@@ -175,7 +175,12 @@ const Ts2UiPlace k_ts2_ui_places[] = {
     { 0x000BFD4E, TS2_UI_RIGHT },  { 0x000BFF64, TS2_UI_RIGHT },
     { 0x000BFFC3, TS2_UI_RIGHT },  { 0x000C0204, TS2_UI_RIGHT },
     { 0x000C02B4, TS2_UI_RIGHT },  { 0x000C03CF, TS2_UI_RIGHT },
-    { 0x000BE5FC, TS2_UI_SIDE },   { 0x000BEDE7, TS2_UI_SIDE },
+    { 0x000BE5FC, TS2_UI_SIDE },
+    /* Keep the full row, both halves of a partial row, and empty rows
+     * from 000BEA90 on the same side as the animated spent bullet. */
+    { 0x000BEDE7, TS2_UI_SIDE },   { 0x000BEE89, TS2_UI_SIDE },
+    { 0x000BEFF0, TS2_UI_SIDE },   { 0x000BF06B, TS2_UI_SIDE },
+    { 0x000BDF40, TS2_UI_SIDE },
     /* The dark backing drawn under each ammo number, from its own call
      * site: left to the width guess it stayed in the 4:3 layout, beside
      * the bars, while the number went to the corner. */
