@@ -175,7 +175,12 @@ const Ts2UiPlace k_ts2_ui_places[] = {
     { 0x000BFD4E, TS2_UI_RIGHT },  { 0x000BFF64, TS2_UI_RIGHT },
     { 0x000BFFC3, TS2_UI_RIGHT },  { 0x000C0204, TS2_UI_RIGHT },
     { 0x000C02B4, TS2_UI_RIGHT },  { 0x000C03CF, TS2_UI_RIGHT },
-    { 0x000BE5FC, TS2_UI_SIDE },   { 0x000BEDE7, TS2_UI_SIDE },
+    { 0x000BE5FC, TS2_UI_SIDE },
+    /* Keep the full row, both halves of a partial row, and empty rows
+     * from 000BEA90 on the same side as the animated spent bullet. */
+    { 0x000BEDE7, TS2_UI_SIDE },   { 0x000BEE89, TS2_UI_SIDE },
+    { 0x000BEFF0, TS2_UI_SIDE },   { 0x000BF06B, TS2_UI_SIDE },
+    { 0x000BDF40, TS2_UI_SIDE },
     /* The dark backing drawn under each ammo number, from its own call
      * site: left to the width guess it stayed in the 4:3 layout, beside
      * the bars, while the number went to the corner. */
@@ -188,6 +193,9 @@ const Ts2UiPlace k_ts2_ui_places[] = {
      * squeezing them would pull them off it. */
     { 0x001BFE0F, TS2_UI_STRETCH }, { 0x001BE7AE, TS2_UI_STRETCH },
     { 0x001BE7E4, TS2_UI_STRETCH }, { 0x001BE947, TS2_UI_STRETCH },
+    /* The heat-haze mesh samples a copy of the scene at each vertex's
+     * screen coordinates plus the distortion. Keep both in the same space. */
+    { 0x000CB15E, TS2_UI_STRETCH },
     /* The handheld's map. It is drawn at the start of the frame into a
      * corner of the back buffer (x 128 on, scissored to 128..309 by
      * 0..181), copied out of it with CopyRects into the 128x128 texture the
