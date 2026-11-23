@@ -193,6 +193,9 @@ const Ts2UiPlace k_ts2_ui_places[] = {
      * squeezing them would pull them off it. */
     { 0x001BFE0F, TS2_UI_STRETCH }, { 0x001BE7AE, TS2_UI_STRETCH },
     { 0x001BE7E4, TS2_UI_STRETCH }, { 0x001BE947, TS2_UI_STRETCH },
+    /* The heat-haze mesh samples a copy of the scene at each vertex's
+     * screen coordinates plus the distortion. Keep both in the same space. */
+    { 0x000CB15E, TS2_UI_STRETCH },
     /* The handheld's map. It is drawn at the start of the frame into a
      * corner of the back buffer (x 128 on, scissored to 128..309 by
      * 0..181), copied out of it with CopyRects into the 128x128 texture the
