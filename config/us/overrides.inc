@@ -150,7 +150,21 @@ void sub_001B3AC0(void) { ts2_ui_enter(); sub_001B3AC0_gen(); ts2_ui_leave(); }
 extern void sub_000C4F10_gen(void);   /* PAL 0x000C4F80, -0x70 */
 void sub_000C4F10(void) { ts2_ui_enter(); sub_000C4F10_gen(); ts2_ui_leave(); }
 extern void sub_001B75A0_gen(void);   /* PAL 0x001B79B0, -0x410 */
-void sub_001B75A0(void) { ts2_ui_enter(); sub_001B75A0_gen(); ts2_ui_leave(); }
+void sub_001B75A0(void)
+{
+    uint32_t site = TS2_MEM32(g_esp);
+
+    /* The vintage scope's four mask quadrants move with the aim. Their outer
+     * edges stop at the 4:3 picture, so panning reveals the scene beyond.
+     * Push the outer edge far past the screen; the rasteriser clips it back.
+     * The left pair's outer edge is its x0 (first argument), the right
+     * pair's is its x1 (third argument). */
+    if (site == 0x000C2B81u || site == 0x000C2B9Eu)
+        TS2_MEM32(g_esp + 4u) = (uint32_t)(int32_t)-2000;
+    else if (site == 0x000C2BC4u || site == 0x000C2BE1u)
+        TS2_MEM32(g_esp + 12u) = (uint32_t)(int32_t)2000;
+    ts2_us_draw_postprocess_quad(sub_001B75A0_gen);
+}
 extern void sub_001B7450_gen(void);   /* PAL 0x001B7860, -0x410 */
 void sub_001B7450(void) { ts2_ui_enter(); sub_001B7450_gen(); ts2_ui_leave(); }
 extern void sub_001B7540_gen(void);   /* PAL 0x001B7950, -0x410 */
