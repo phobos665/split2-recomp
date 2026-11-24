@@ -83,6 +83,7 @@ void sub_000C4F10(void) { ts2_ui_enter(); sub_000C4F10_gen(); ts2_ui_leave(); }
  * the copies visibly soften geometry. The texture copies and render-state
  * setup still run, and other screen-copy effects retain their own draws. */
 extern unsigned d3d8_GetBackBufferWidth(void);
+extern unsigned d3d8_GetGuestWidth(void);
 
 static void ts2_us_draw_postprocess_quad(void (*draw)(void))
 {
