@@ -170,27 +170,31 @@ void sub_001B75A0(void)
         unsigned guest_w = d3d8_GetGuestWidth();
         unsigned guest_h = d3d8_GetGuestHeight();
         unsigned aspect_w, aspect_h;
-        float fade;
+        float scale, fade, centre;
 
         recomp_widescreen_aspect(&aspect_w, &aspect_h);
+        scale = (!guest_w || !guest_h || !aspect_w || !aspect_h) ? 1.0f :
+                ((float)guest_w * aspect_h) / ((float)guest_h * aspect_w);
+        centre = (float)guest_w * 0.5f;
         if (!guest_w || !guest_h || !aspect_w || !aspect_h || y1 == y0)
             fade = (float)(y1 - y0);
         else
             /* The fade must look as tall as it is wide on the widescreen
              * picture: stretch back the guest X span by the aspect factor. */
-            fade = (float)(y1 - y0) *
-                   ((float)guest_w * aspect_h) / ((float)guest_h * aspect_w);
+            fade = (float)(y1 - y0) * scale;
         if (fade < 1.0f)
             fade = 1.0f;
 
         if (site == 0x000C2B81u || site == 0x000C2B9Eu) {
-            int32_t inner = x1;
+            int32_t inner = (int32_t)(centre + ((float)x1 - centre) * scale);
             TS2_MEM32(g_esp + 4u) = (uint32_t)(int32_t)-2000;
+            TS2_MEM32(g_esp + 12u) = (uint32_t)inner;
             TS2_MEM32(g_esp + 20u) = (uint32_t)(int32_t)(
                 (float)u1 - ((float)inner - -2000.0f) *
                                 ((float)(u1 - u0) / fade));
         } else {
-            int32_t inner = x0;
+            int32_t inner = (int32_t)(centre + ((float)x0 - centre) * scale);
+            TS2_MEM32(g_esp + 4u) = (uint32_t)inner;
             TS2_MEM32(g_esp + 12u) = (uint32_t)(int32_t)2000;
             TS2_MEM32(g_esp + 28u) = (uint32_t)(int32_t)(
                 (float)u0 + (2000.0f - (float)inner) *
@@ -338,7 +342,7 @@ const Ts2UiPlace k_ts2_ui_places[] = {
     { 0x000C2B3B, TS2_UI_STRETCH }, { 0x000C2B5A, TS2_UI_STRETCH },
     { 0x000C2B81, TS2_UI_STRETCH }, { 0x000C2B9E, TS2_UI_STRETCH },
     { 0x000C2BC4, TS2_UI_STRETCH }, { 0x000C2BE1, TS2_UI_STRETCH },
-    { 0x000C2C7C, TS2_UI_STRETCH }, { 0x000C2C9D, TS2_UI_STRETCH },
+    { 0x000C2C7C, TS2_UI_CENTRE }, { 0x000C2C9D, TS2_UI_STRETCH },
     /* Sniper scope: the in-lens text (ammo count, range) and its small icon
      * were left at 4:3 positions, so they drifted off the centred lens. */
     { 0x001C7EFF, TS2_UI_CENTRE }, { 0x000C37BA, TS2_UI_CENTRE },
