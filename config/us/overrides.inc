@@ -159,26 +159,43 @@ void sub_001B75A0(void)
      * Push the outer edge far past the screen; the rasteriser clips it back.
      * The left pair's outer edge is its x0 (first argument), the right
      * pair's is its x1 (third argument). */
-    if (site == 0x000C2B81u || site == 0x000C2B9Eu) {
+    if (site == 0x000C2B81u || site == 0x000C2B9Eu ||
+        site == 0x000C2BC4u || site == 0x000C2BE1u) {
         int32_t x0 = (int32_t)TS2_MEM32(g_esp + 4u);
         int32_t x1 = (int32_t)TS2_MEM32(g_esp + 12u);
+        int32_t y0 = (int32_t)TS2_MEM32(g_esp + 8u);
+        int32_t y1 = (int32_t)TS2_MEM32(g_esp + 16u);
         int32_t u0 = (int32_t)TS2_MEM32(g_esp + 20u);
         int32_t u1 = (int32_t)TS2_MEM32(g_esp + 28u);
-        float scale = x1 != x0 ? (float)(u1 - u0) / (float)(x1 - x0) : 0.0f;
+        unsigned guest_w = d3d8_GetGuestWidth();
+        unsigned guest_h = d3d8_GetGuestHeight();
+        unsigned aspect_w, aspect_h;
+        float fade;
 
-        TS2_MEM32(g_esp + 4u) = (uint32_t)(int32_t)-2000;
-        TS2_MEM32(g_esp + 20u) =
-            (uint32_t)(int32_t)(u0 + (int32_t)((-2000.0f - (float)x0) * scale));
-    } else if (site == 0x000C2BC4u || site == 0x000C2BE1u) {
-        int32_t x0 = (int32_t)TS2_MEM32(g_esp + 4u);
-        int32_t x1 = (int32_t)TS2_MEM32(g_esp + 12u);
-        int32_t u0 = (int32_t)TS2_MEM32(g_esp + 20u);
-        int32_t u1 = (int32_t)TS2_MEM32(g_esp + 28u);
-        float scale = x1 != x0 ? (float)(u1 - u0) / (float)(x1 - x0) : 0.0f;
+        recomp_widescreen_aspect(&aspect_w, &aspect_h);
+        if (!guest_w || !guest_h || !aspect_w || !aspect_h || y1 == y0)
+            fade = (float)(y1 - y0);
+        else
+            /* The fade must look as tall as it is wide on the widescreen
+             * picture: stretch back the guest X span by the aspect factor. */
+            fade = (float)(y1 - y0) *
+                   ((float)guest_w * aspect_h) / ((float)guest_h * aspect_w);
+        if (fade < 1.0f)
+            fade = 1.0f;
 
-        TS2_MEM32(g_esp + 12u) = (uint32_t)(int32_t)2000;
-        TS2_MEM32(g_esp + 28u) =
-            (uint32_t)(int32_t)(u1 + (int32_t)((2000.0f - (float)x1) * scale));
+        if (site == 0x000C2B81u || site == 0x000C2B9Eu) {
+            int32_t inner = x1;
+            TS2_MEM32(g_esp + 4u) = (uint32_t)(int32_t)-2000;
+            TS2_MEM32(g_esp + 20u) = (uint32_t)(int32_t)(
+                (float)u1 - ((float)inner - -2000.0f) *
+                                ((float)(u1 - u0) / fade));
+        } else {
+            int32_t inner = x0;
+            TS2_MEM32(g_esp + 12u) = (uint32_t)(int32_t)2000;
+            TS2_MEM32(g_esp + 28u) = (uint32_t)(int32_t)(
+                (float)u0 + (2000.0f - (float)inner) *
+                                ((float)(u1 - u0) / fade));
+        }
     }
     ts2_us_draw_postprocess_quad(sub_001B75A0_gen);
 }
