@@ -291,6 +291,9 @@ const Ts2UiPlace k_ts2_ui_places[] = {
     { 0x000C2B81, TS2_UI_CENTRE }, { 0x000C2B9E, TS2_UI_CENTRE },
     { 0x000C2BC4, TS2_UI_CENTRE }, { 0x000C2BE1, TS2_UI_CENTRE },
     { 0x000C2C7C, TS2_UI_CENTRE }, { 0x000C2C9D, TS2_UI_STRETCH },
+    /* Sniper scope: the in-lens text (ammo count, range) and its small icon
+     * were left at 4:3 positions, so they drifted off the centred lens. */
+    { 0x001C7EFF, TS2_UI_CENTRE }, { 0x000C37BA, TS2_UI_CENTRE },
     /* Sprites the game places in the world and projects to the screen
      * itself (the brazier's flame, muzzle flashes): they were projected
      * through the widened camera, so they are already where the 3D is and
