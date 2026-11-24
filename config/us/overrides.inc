@@ -159,10 +159,27 @@ void sub_001B75A0(void)
      * Push the outer edge far past the screen; the rasteriser clips it back.
      * The left pair's outer edge is its x0 (first argument), the right
      * pair's is its x1 (third argument). */
-    if (site == 0x000C2B81u || site == 0x000C2B9Eu)
+    if (site == 0x000C2B81u || site == 0x000C2B9Eu) {
+        int32_t x0 = (int32_t)TS2_MEM32(g_esp + 4u);
+        int32_t x1 = (int32_t)TS2_MEM32(g_esp + 12u);
+        int32_t u0 = (int32_t)TS2_MEM32(g_esp + 20u);
+        int32_t u1 = (int32_t)TS2_MEM32(g_esp + 28u);
+        float scale = x1 != x0 ? (float)(u1 - u0) / (float)(x1 - x0) : 0.0f;
+
         TS2_MEM32(g_esp + 4u) = (uint32_t)(int32_t)-2000;
-    else if (site == 0x000C2BC4u || site == 0x000C2BE1u)
+        TS2_MEM32(g_esp + 20u) =
+            (uint32_t)(int32_t)(u0 + (int32_t)((-2000.0f - (float)x0) * scale));
+    } else if (site == 0x000C2BC4u || site == 0x000C2BE1u) {
+        int32_t x0 = (int32_t)TS2_MEM32(g_esp + 4u);
+        int32_t x1 = (int32_t)TS2_MEM32(g_esp + 12u);
+        int32_t u0 = (int32_t)TS2_MEM32(g_esp + 20u);
+        int32_t u1 = (int32_t)TS2_MEM32(g_esp + 28u);
+        float scale = x1 != x0 ? (float)(u1 - u0) / (float)(x1 - x0) : 0.0f;
+
         TS2_MEM32(g_esp + 12u) = (uint32_t)(int32_t)2000;
+        TS2_MEM32(g_esp + 28u) =
+            (uint32_t)(int32_t)(u1 + (int32_t)((2000.0f - (float)x1) * scale));
+    }
     ts2_us_draw_postprocess_quad(sub_001B75A0_gen);
 }
 extern void sub_001B7450_gen(void);   /* PAL 0x001B7860, -0x410 */
