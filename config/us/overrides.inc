@@ -89,7 +89,8 @@ static void ts2_us_draw_postprocess_quad(void (*draw)(void))
 {
     uint32_t site = TS2_MEM32(g_esp);
 
-    if (site == 0x000C9FCAu || site == 0x000CA261u || site == 0x000CA705u) {
+    if (site == 0x000C9FCAu || site == 0x000CA099u || site == 0x000CA261u ||
+        site == 0x000CA705u) {
         static int preserve_blur = -1;
 
         if (preserve_blur < 0)
