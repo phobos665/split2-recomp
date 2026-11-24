@@ -78,8 +78,36 @@ extern void sub_001B3AC0_gen(void);   /* PAL 0x001B3ED0, -0x410 */
 void sub_001B3AC0(void) { ts2_ui_enter(); sub_001B3AC0_gen(); ts2_ui_leave(); }
 extern void sub_000C4F10_gen(void);   /* PAL 0x000C4F80, -0x70 */
 void sub_000C4F10(void) { ts2_ui_enter(); sub_000C4F10_gen(); ts2_ui_leave(); }
+/* These three post-process quads blend guest-size copies back over the
+ * rendered scene. Skip their submissions at higher render scales, where
+ * the copies visibly soften geometry. The texture copies and render-state
+ * setup still run, and other screen-copy effects retain their own draws. */
+extern unsigned d3d8_GetBackBufferWidth(void);
+extern unsigned d3d8_GetGuestWidth(void);
+
+static void ts2_us_draw_postprocess_quad(void (*draw)(void))
+{
+    uint32_t site = TS2_MEM32(g_esp);
+
+    if (site == 0x000C9FCAu || site == 0x000CA099u || site == 0x000CA261u ||
+        site == 0x000CA705u) {
+        static int preserve_blur = -1;
+
+        if (preserve_blur < 0)
+            preserve_blur = recomp_config_bool("RECOMP_TS2_LEGACY_BLUR", "ts2_legacy_blur", 0);
+        if (!preserve_blur && d3d8_GetBackBufferWidth() > d3d8_GetGuestWidth()) {
+            g_esp += 4u; /* cdecl return; the caller removes its arguments */
+            return;
+        }
+    }
+
+    ts2_ui_enter();
+    draw();
+    ts2_ui_leave();
+}
+
 extern void sub_001B75A0_gen(void);   /* PAL 0x001B79B0, -0x410 */
-void sub_001B75A0(void) { ts2_ui_enter(); sub_001B75A0_gen(); ts2_ui_leave(); }
+void sub_001B75A0(void) { ts2_us_draw_postprocess_quad(sub_001B75A0_gen); }
 extern void sub_001B7450_gen(void);   /* PAL 0x001B7860, -0x410 */
 void sub_001B7450(void) { ts2_ui_enter(); sub_001B7450_gen(); ts2_ui_leave(); }
 extern void sub_001B7540_gen(void);   /* PAL 0x001B7950, -0x410 */
@@ -109,7 +137,7 @@ void sub_001ACD10(void) { ts2_ui_enter(); sub_001ACD10_gen(); ts2_ui_leave(); }
 extern void sub_001ACD90_gen(void);   /* PAL 0x001AD1D0, -0x440 */
 void sub_001ACD90(void) { ts2_ui_enter(); sub_001ACD90_gen(); ts2_ui_leave(); }
 extern void sub_001B7110_gen(void);   /* PAL 0x001B7520, -0x410 */
-void sub_001B7110(void) { ts2_ui_enter(); sub_001B7110_gen(); ts2_ui_leave(); }
+void sub_001B7110(void) { ts2_us_draw_postprocess_quad(sub_001B7110_gen); }
 
 /* Where TimeSplitters 2 (USA, this XBE) draws what: the PAL table with each
  * site moved to the USA return address of the same call -- the shift of its
