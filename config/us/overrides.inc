@@ -319,8 +319,8 @@ const Ts2UiPlace k_ts2_ui_places[] = {
      * the viewport around the lens; the quadrants and cross stay centred. */
     { 0x000C2B06, TS2_UI_STRETCH }, { 0x000C2B22, TS2_UI_STRETCH },
     { 0x000C2B3B, TS2_UI_STRETCH }, { 0x000C2B5A, TS2_UI_STRETCH },
-    { 0x000C2B81, TS2_UI_CENTRE }, { 0x000C2B9E, TS2_UI_CENTRE },
-    { 0x000C2BC4, TS2_UI_CENTRE }, { 0x000C2BE1, TS2_UI_CENTRE },
+    { 0x000C2B81, TS2_UI_STRETCH }, { 0x000C2B9E, TS2_UI_STRETCH },
+    { 0x000C2BC4, TS2_UI_STRETCH }, { 0x000C2BE1, TS2_UI_STRETCH },
     { 0x000C2C7C, TS2_UI_CENTRE }, { 0x000C2C9D, TS2_UI_STRETCH },
     /* Sniper scope: the in-lens text (ammo count, range) and its small icon
      * were left at 4:3 positions, so they drifted off the centred lens. */
