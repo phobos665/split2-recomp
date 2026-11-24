@@ -283,6 +283,14 @@ const Ts2UiPlace k_ts2_ui_places[] = {
     { 0x000C3DF2, TS2_UI_CENTRE }, { 0x000C3E0A, TS2_UI_CENTRE },
     { 0x000C3E1C, TS2_UI_CENTRE }, { 0x000C3E37, TS2_UI_CENTRE },
     { 0x000C3E49, TS2_UI_CENTRE },
+    /* Vintage rifle: its scope is a separate renderer drawn as four edge
+     * strips, four lens quadrants and a centre cross. The edge strips fill
+     * the viewport around the lens; the quadrants and cross stay centred. */
+    { 0x000C2B06, TS2_UI_STRETCH }, { 0x000C2B22, TS2_UI_STRETCH },
+    { 0x000C2B3B, TS2_UI_STRETCH }, { 0x000C2B5A, TS2_UI_STRETCH },
+    { 0x000C2B81, TS2_UI_CENTRE }, { 0x000C2B9E, TS2_UI_CENTRE },
+    { 0x000C2BC4, TS2_UI_CENTRE }, { 0x000C2BE1, TS2_UI_CENTRE },
+    { 0x000C2C7C, TS2_UI_CENTRE }, { 0x000C2C9D, TS2_UI_STRETCH },
     /* Sprites the game places in the world and projects to the screen
      * itself (the brazier's flame, muzzle flashes): they were projected
      * through the widened camera, so they are already where the 3D is and
