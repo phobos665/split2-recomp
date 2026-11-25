@@ -485,6 +485,7 @@ static float ts2_camera_widen(void)
 
 /* What the frame now being drawn has run, for the choice below. */
 static int g_ts2_frame_camera, g_ts2_frame_front_end;
+static int g_ts2_scope_active;
 
 static void ts2_camera_setup(void (*camera_setup)(void))
 {
@@ -571,6 +572,7 @@ static void ts2_present(void (*present)(void))
     xbox_D3D8SetWideFrames(ts2_menus_wide() ||
                            (g_ts2_frame_camera && !g_ts2_frame_front_end));
     g_ts2_frame_camera = g_ts2_frame_front_end = 0;
+    g_ts2_scope_active = 0;
 }
 
 /* ── TimeSplitters 2: where each piece of 2D goes in widescreen ── */
@@ -617,6 +619,10 @@ static void ts2_present(void (*present)(void))
 
 enum { TS2_UI_AUTO = 0, TS2_UI_STRETCH, TS2_UI_CENTRE, TS2_UI_LEFT, TS2_UI_RIGHT,
        TS2_UI_SIDE };
+
+/* A release's scope renderer and the ammo groups that move with it. */
+static int ts2_ui_scope_marker(uint32_t site);
+static int ts2_ui_scope_place(uint32_t site);
 
 /* xboxrecomp src/hle/hle_d3d8_record.h: xbox_D3D8SetTwoDPlacement, recorded in
  * frame captures so a capture replays with these placements. Same values
@@ -773,10 +779,14 @@ static int ts2_ui_mode(void)
 static int ts2_ui_place_for(uint32_t site)
 {
     int i;
+    int place;
 
     for (i = 0; i < g_ts2_ui_extra_count; i++)
         if (g_ts2_ui_extra[i].site == site)
             return g_ts2_ui_extra[i].placement;
+    place = ts2_ui_scope_place(site);
+    if (place >= 0)
+        return place;
     for (i = 0; k_ts2_ui_places[i].site; i++)
         if (k_ts2_ui_places[i].site == site)
             return k_ts2_ui_places[i].placement;
@@ -818,10 +828,13 @@ static void ts2_ui_reserve(void (*reserve)(void), void (*flush)(void))
     if (ts2_ui_mode()) {
         uint32_t leaf = TS2_MEM32(g_esp);
         uint32_t site = g_ts2_depth ? g_ts2_chain[0] : leaf;
-        int place = ts2_ui_place_for(site);
+        int place, change;
 
-        int change = place != g_ts2_batch_place || place == TS2_UI_SIDE ||
-                     (g_ts2_ui_mode == 2 && site != g_ts2_batch_site);
+        if (ts2_ui_scope_marker(site))
+            g_ts2_scope_active = 1;
+        place = ts2_ui_place_for(site);
+        change = place != g_ts2_batch_place || place == TS2_UI_SIDE ||
+                 (g_ts2_ui_mode == 2 && site != g_ts2_batch_site);
 
         if (g_ts2_ui_mode == 2)
             ts2_ui_note_site(site, leaf);

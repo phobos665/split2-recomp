@@ -163,6 +163,18 @@ const Ts2Roster k_ts2_roster = {
  * reads stays in proportion in the middle. A full-screen pass left to the
  * renderer's width guess was sometimes kept at 4:3, and its edge showed
  * as a seam down both old borders on every screen. */
+static int ts2_ui_scope_marker(uint32_t site)
+{
+    (void)site;
+    return 0;
+}
+
+static int ts2_ui_scope_place(uint32_t site)
+{
+    (void)site;
+    return -1;
+}
+
 const Ts2UiPlace k_ts2_ui_places[] = {
     /* Full-screen quads, fades and post passes (the glow over the frame). */
     { 0x000224CA, TS2_UI_STRETCH }, { 0x000224F3, TS2_UI_STRETCH },

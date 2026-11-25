@@ -238,6 +238,23 @@ void sub_001B7110(void) { ts2_ui_enter(); sub_001B7110_gen(); ts2_ui_leave(); }
  * site moved to the USA return address of the same call -- the shift of its
  * stretch of code, checked on every entry to follow a call to one of the
  * functions wrapped above. Ends at site 0. */
+/* The sniper scope draws its cartridge strip and ammo number through the
+ * same sites as the ordinary HUD, but beside the reticle either group can
+ * cross the automatic side-anchor boundary independently. Once the scope
+ * renderer has drawn, keep both groups in the centred layout with it. */
+static int ts2_ui_scope_marker(uint32_t site)
+{
+    return site == 0x001C7EFFu || site == 0x000CA58Eu;
+}
+
+static int ts2_ui_scope_place(uint32_t site)
+{
+    if (g_ts2_scope_active &&
+        (site == 0x000BE5FCu || site == 0x000BEDE7u))
+        return TS2_UI_CENTRE;
+    return -1;
+}
+
 const Ts2UiPlace k_ts2_ui_places[] = {
     /* Full-screen quads, fades and post passes (the glow over the frame). */
     { 0x000224CA, TS2_UI_STRETCH }, { 0x000224F3, TS2_UI_STRETCH },
