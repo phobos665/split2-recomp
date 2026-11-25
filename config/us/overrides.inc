@@ -290,7 +290,9 @@ void sub_001B75A0(void)
                                 ((float)(u1 - u0) / fade));
         }
     }
-    ts2_us_draw_postprocess_quad(sub_001B75A0_gen);
+    ts2_ui_enter();
+    sub_001B75A0_gen();
+    ts2_ui_leave();
 }
 extern void sub_001B7450_gen(void);   /* PAL 0x001B7860, -0x410 */
 void sub_001B7450(void)
