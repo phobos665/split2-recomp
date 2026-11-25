@@ -250,7 +250,8 @@ static int ts2_ui_scope_marker(uint32_t site)
 static int ts2_ui_scope_place(uint32_t site)
 {
     if (g_ts2_scope_active &&
-        (site == 0x000BE5FCu || site == 0x000BEDE7u))
+        (site == 0x000BE5CFu || site == 0x000BE5FCu ||
+         site == 0x000BEDE7u))
         return TS2_UI_CENTRE;
     return -1;
 }
