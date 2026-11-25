@@ -18,6 +18,8 @@
  * it; "PAL 0x..." is the address in config/pal/overrides.inc.
  */
 
+#include <math.h>
+
 /* camera_setup is sub_00032D90 (PAL 0x00032DC0). It turns its third
  * argument into aspect * width / height, builds the projection with
  * sub_000E6A00 (PAL 0x000E6E30: build_projection), and stores tan(fov/2)
@@ -75,8 +77,79 @@ void sub_001C98AF(void) { ts2_ui_batch_flush(sub_001C98AF_gen); }
  * the same order and spacing as the PAL ones. The sites below call 18 of
  * them; sub_001B7110 is called through the thunk at 001B7430 (jmp), as in
  * PAL, so its sites are the callers of the thunk. */
+extern int d3d8_display_wide_now(void);
+extern unsigned d3d8_GetGuestWidth(void);
+extern unsigned d3d8_GetGuestHeight(void);
+extern void recomp_widescreen_aspect(unsigned *width, unsigned *height);
+
+/* The modern sniper draws a moving rounded rectangle. CENTRE squeezes the
+ * GPU viewport *after* clipping to the 4:3 picture. At full left aim the
+ * reticle consequently stopped at x=80 even though the shade reached x=0.
+ * Give this optic its centred X coordinates before guest and GPU clipping,
+ * then submit to the full player viewport. Keep the transform local to the
+ * draw routine, including its calls to the shared font and cartridge code. */
+typedef struct { float centre, scale; } Ts2SniperLayout;
+static RECOMP_MANUAL_TLS Ts2SniperLayout g_ts2_sniper;
+
+extern void sub_000C2CB0_gen(void);
+void sub_000C2CB0(void)
+{
+    Ts2SniperLayout saved = g_ts2_sniper;
+    g_ts2_sniper.scale = 0.0f;
+    if (TS2_MEM32(g_esp + 16u) && d3d8_display_wide_now()) {
+        unsigned w = d3d8_GetGuestWidth(), h = d3d8_GetGuestHeight();
+        unsigned aw, ah;
+        uint32_t vp = TS2_MEM32(0x00483F28u);
+        recomp_widescreen_aspect(&aw, &ah);
+        if (w && h && aw && ah && vp && TS2_MEM32(vp) == 0 &&
+            TS2_MEM32(vp + 4u) == w - 1u) {
+            float scale = ((float)w * ah) / ((float)h * aw);
+            if (scale != 1.0f) {
+                g_ts2_sniper.centre = w * 0.5f;
+                g_ts2_sniper.scale = scale;
+            }
+        }
+    }
+    sub_000C2CB0_gen();
+    g_ts2_sniper = saved;
+}
+
+static float ts2_sniper_x(float x)
+{
+    return g_ts2_sniper.centre + (x - g_ts2_sniper.centre) * g_ts2_sniper.scale;
+}
+
+static int ts2_sniper_places_quad(void)
+{
+    return g_ts2_sniper.scale && g_ts2_depth &&
+           ts2_ui_place_for(g_ts2_chain[0]) == TS2_UI_STRETCH;
+}
+
+static void ts2_sniper_float_quad(void (*draw)(void))
+{
+    uint32_t args = g_esp + 4u;
+    uint32_t x0 = TS2_MEM32(args), x1 = TS2_MEM32(args + 8u);
+    TS2_MEMF(args) = ts2_sniper_x(TS2_MEMF(args));
+    TS2_MEMF(args + 8u) = ts2_sniper_x(TS2_MEMF(args + 8u));
+    draw();
+    TS2_MEM32(args) = x0;
+    TS2_MEM32(args + 8u) = x1;
+}
+
 extern void sub_001B5E80_gen(void);   /* PAL 0x001B6290, -0x410 */
-void sub_001B5E80(void) { ts2_ui_enter(); sub_001B5E80_gen(); ts2_ui_leave(); }
+void sub_001B5E80(void)
+{
+    ts2_ui_enter();
+    /* The scene copy covers the viewport. Glyphs have already been placed
+     * at their visibility test in 001AB380. The other textured quads are
+     * the authored corners and the cartridge strip. */
+    if (ts2_sniper_places_quad() && g_ts2_chain[0] != 0x000C31F3u &&
+        TS2_MEM32(g_esp) != 0x001AB3FAu)
+        ts2_sniper_float_quad(sub_001B5E80_gen);
+    else
+        sub_001B5E80_gen();
+    ts2_ui_leave();
+}
 extern void sub_001B6210_gen(void);   /* PAL 0x001B6620, -0x410 */
 void sub_001B6210(void) { ts2_ui_enter(); sub_001B6210_gen(); ts2_ui_leave(); }
 extern void sub_001C0F18_gen(void);   /* PAL 0x001C1328, -0x410 */
@@ -88,10 +161,6 @@ extern void sub_001B54D0_gen(void);   /* PAL 0x001B58E0, -0x410 */
  * pieces between the lens and the player viewport. The lens uses the
  * renderer's centred 2D transform. Apply that transform to the inner
  * endpoints only, leaving the mask's outer endpoints on the viewport. */
-extern int d3d8_display_wide_now(void);
-extern unsigned d3d8_GetGuestWidth(void);
-extern unsigned d3d8_GetGuestHeight(void);
-
 static void ts2_scope_mask_quad(uint32_t site)
 {
     uint32_t args = g_esp + 4u;
@@ -100,23 +169,27 @@ static void ts2_scope_mask_quad(uint32_t site)
     float right = (float)(int32_t)TS2_MEM32(viewport + 4u);
     unsigned guest_w = d3d8_GetGuestWidth();
     unsigned guest_h = d3d8_GetGuestHeight();
+    unsigned aspect_w, aspect_h;
     float centre = guest_w * 0.5f;
     uint32_t saved_left = TS2_MEM32(args);
     uint32_t saved_right = TS2_MEM32(args + 8u);
 
+    recomp_widescreen_aspect(&aspect_w, &aspect_h);
     if (guest_w && guest_h && ts2_ui_place_for(site) == TS2_UI_STRETCH) {
-        /* Match two_d_squeeze in the pinned renderer: gameplay presents at 16:9. */
-        float scale = ((float)guest_w * 9.0f) / ((float)guest_h * 16.0f);
-        if (scale >= 1.0f) {
-            sub_001B54D0_gen();
-            return;
+        float scale = ((float)guest_w * aspect_h) / ((float)guest_h * aspect_w);
+        float x0 = TS2_MEMF(args), x1 = TS2_MEMF(args + 8u);
+        int move_x0 = x0 != left && x0 != right;
+        int move_x1 = x1 != left && x1 != right;
+        if (g_ts2_sniper.scale) {
+            /* Only the three left pieces pin x0 and the three right pieces
+             * pin x1. A lens edge can equal 0 or 639 at one aim position. */
+            move_x0 = site != 0x000C2F37u && site != 0x000C2F88u && site != 0x000C3025u;
+            move_x1 = site != 0x000C2F62u && site != 0x000C2FD6u && site != 0x000C3050u;
         }
-        float x = TS2_MEMF(args);
-        if (x != left && x != right)
-            TS2_MEMF(args) = centre + (x - centre) * scale;
-        x = TS2_MEMF(args + 8u);
-        if (x != left && x != right)
-            TS2_MEMF(args + 8u) = centre + (x - centre) * scale;
+        if (move_x0)
+            TS2_MEMF(args) = centre + (x0 - centre) * scale;
+        if (move_x1)
+            TS2_MEMF(args + 8u) = centre + (x1 - centre) * scale;
     }
     sub_001B54D0_gen();
     TS2_MEM32(args) = saved_left;
@@ -140,7 +213,23 @@ void sub_001B6610(void) { ts2_ui_enter(); sub_001B6610_gen(); ts2_ui_leave(); }
 extern void sub_001B75F0_gen(void);   /* PAL 0x001B7A00, -0x410 */
 void sub_001B75F0(void) { ts2_ui_enter(); sub_001B75F0_gen(); ts2_ui_leave(); }
 extern void sub_001B52C0_gen(void);   /* PAL 0x001B56D0, -0x410 */
-void sub_001B52C0(void) { ts2_ui_enter(); sub_001B52C0_gen(); ts2_ui_leave(); }
+typedef struct { float left, right; } Ts2SniperSpan;
+static RECOMP_MANUAL_TLS const Ts2SniperSpan *g_ts2_sniper_span;
+
+void sub_001B52C0(void)
+{
+    ts2_ui_enter();
+    if (g_ts2_sniper_span && TS2_MEM32(g_esp) == 0x001B7501u) {
+        /* The integer clipper passed the visible pixel bounds. Intersect
+         * them with the subpixel span. This writer adds one to x1 itself. */
+        uint32_t args = g_esp + 4u;
+        TS2_MEMF(args) = fmaxf(TS2_MEMF(args), g_ts2_sniper_span->left);
+        TS2_MEMF(args + 8u) = fminf(TS2_MEMF(args + 8u) + 1.0f,
+                                     g_ts2_sniper_span->right) - 1.0f;
+    }
+    sub_001B52C0_gen();
+    ts2_ui_leave();
+}
 extern void sub_00058300_gen(void);   /* PAL 0x00058360, -0x60 */
 void sub_00058300(void) { ts2_ui_enter(); sub_00058300_gen(); ts2_ui_leave(); }
 extern void sub_001B5990_gen(void);   /* PAL 0x001B5DA0, -0x410 */
@@ -204,7 +293,32 @@ void sub_001B75A0(void)
     ts2_us_draw_postprocess_quad(sub_001B75A0_gen);
 }
 extern void sub_001B7450_gen(void);   /* PAL 0x001B7860, -0x410 */
-void sub_001B7450(void) { ts2_ui_enter(); sub_001B7450_gen(); ts2_ui_leave(); }
+void sub_001B7450(void)
+{
+    ts2_ui_enter();
+    if (ts2_sniper_places_quad()) {
+        /* The alpha clear, crosshair and meter go through this inclusive
+         * integer rectangle clipper. Give it the bounding pixels in the
+         * display coordinate system, preserving the exact edges for its
+         * float writer. The guest still sorts/clips Y and rejects empty
+         * draws, including rectangles wholly outside the player viewport. */
+        uint32_t args = g_esp + 4u;
+        int32_t x0 = (int32_t)TS2_MEM32(args), x1 = (int32_t)TS2_MEM32(args + 8u);
+        Ts2SniperSpan span = { ts2_sniper_x((float)(x0 < x1 ? x0 : x1)),
+                               ts2_sniper_x((float)(x0 < x1 ? x1 : x0) + 1.0f) };
+        const Ts2SniperSpan *saved = g_ts2_sniper_span;
+        TS2_MEM32(args) = (uint32_t)(int32_t)floorf(span.left);
+        TS2_MEM32(args + 8u) = (uint32_t)(int32_t)(ceilf(span.right) - 1.0f);
+        g_ts2_sniper_span = &span;
+        sub_001B7450_gen();
+        g_ts2_sniper_span = saved;
+        TS2_MEM32(args) = (uint32_t)x0;
+        TS2_MEM32(args + 8u) = (uint32_t)x1;
+    } else {
+        sub_001B7450_gen();
+    }
+    ts2_ui_leave();
+}
 extern void sub_001B7540_gen(void);   /* PAL 0x001B7950, -0x410 */
 void sub_001B7540(void) { ts2_ui_enter(); sub_001B7540_gen(); ts2_ui_leave(); }
 extern void sub_000AA5B0_gen(void);   /* PAL 0x000AA5F0, -0x40 */
@@ -216,7 +330,16 @@ void sub_000AA630(void) { ts2_ui_enter(); sub_000AA630_gen(); ts2_ui_leave(); }
 extern void sub_00138BA0_gen(void);   /* PAL 0x00138FE0, -0x440 */
 void sub_00138BA0(void) { ts2_ui_enter(); sub_00138BA0_gen(); ts2_ui_leave(); }
 extern void sub_001AB380_gen(void);   /* PAL 0x001AB7C0, -0x440 */
-void sub_001AB380(void) { ts2_ui_enter(); sub_001AB380_gen(); ts2_ui_leave(); }
+void sub_001AB380(void)
+{
+    ts2_ui_enter();
+    /* The glyph helper culls X against 640 before emitting a textured quad. */
+    if (ts2_sniper_places_quad())
+        ts2_sniper_float_quad(sub_001AB380_gen);
+    else
+        sub_001AB380_gen();
+    ts2_ui_leave();
+}
 extern void sub_001AC350_gen(void);   /* PAL 0x001AC790, -0x440 */
 void sub_001AC350(void) { ts2_ui_enter(); sub_001AC350_gen(); ts2_ui_leave(); }
 extern void sub_001AC910_gen(void);   /* PAL 0x001ACD50, -0x440 */
@@ -249,6 +372,10 @@ static int ts2_ui_scope_marker(uint32_t site)
 
 static int ts2_ui_scope_place(uint32_t site)
 {
+    /* The sniper's moving primitives have their own pre-clip placement.
+     * This includes partial ammo rows reached while a shot is animating. */
+    if (g_ts2_sniper.scale)
+        return TS2_UI_STRETCH;
     if (g_ts2_scope_active &&
         (site == 0x000BE5CFu || site == 0x000BE5FCu ||
          site == 0x000BEDE7u))
