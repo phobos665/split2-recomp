@@ -37,6 +37,46 @@ void sub_0009F180(void) { ts2_front_end_scene(sub_0009F180_gen); }
 extern void sub_001CC100_gen(void);
 void sub_001CC100(void) { ts2_present(sub_001CC100_gen); }
 
+/* 000B3E10 advances the held weapon toward its firing pose. The action
+ * record's +0x50 pulse is rebuilt only on whole-tick frames, while +0x4C
+ * remains set for as long as the trigger is held. At above-60 FPS that
+ * makes the pulse absent from most rendered frames; the minigun spin-up
+ * then follows its decay path instead of accumulating elapsed time. Keep
+ * the pulse visible to this one animation update while the trigger remains
+ * held, without changing the action state seen by any other subsystem. */
+#define TS2_US_GAME_STEP 0x0034889Cu
+extern const char *xbox_Nv2aFlipGateModeName(void);
+extern void sub_000B3E10_gen(void);
+
+static int ts2_us_uncapped_free_step(void)
+{
+    static int config = -1;
+    const char *cap;
+
+    if (config < 0)
+        config = recomp_config_bool("RECOMP_TS2_FREE_STEP", "ts2_free_step", 1);
+    cap = xbox_Nv2aFlipGateModeName();
+    return config && cap && (!strcmp(cap, "off") || atoi(cap) > 60);
+}
+
+void sub_000B3E10(void)
+{
+    uint32_t held = TS2_MEM32(g_esp + 4u);
+    uint32_t action = g_esi;
+
+    if (ts2_us_uncapped_free_step() && TS2_MEM32(TS2_US_GAME_STEP) == 0u &&
+        held && TS2_MEM32(held + 0x30u) == 5u &&
+        action && TS2_MEM32(action + 0x4Cu) != 0u) {
+        uint32_t saved = TS2_MEM32(action + 0x50u);
+
+        TS2_MEM32(action + 0x50u) = 1u;
+        sub_000B3E10_gen();
+        TS2_MEM32(action + 0x50u) = saved;
+        return;
+    }
+    sub_000B3E10_gen();
+}
+
 /* reserve is sub_001C8E35 (PAL 0x001C9265): 52 callers, a switch on its
  * first argument (the primitive type), and it calls the flush. flush is
  * sub_001C98AF (PAL 0x001C9CDF): it draws through sub_001CC1D0, the game's
