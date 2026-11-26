@@ -117,8 +117,11 @@ In the launcher's Video tab:
 | Variable refresh rate | In fullscreen, an even 60 on a high refresh display. It has to be on in the display's driver too |
 | Frame interpolation | 2 shows twice the game's frames, up to 4. 1 is off. Best with variable refresh |
 
-The game runs its logic once a frame, so an uncapped frame rate makes it run
-fast. Use frame interpolation for smoother motion instead.
+In US builds with elapsed-time gameplay enabled, an uncapped or above-60
+frame cap applies during gameplay. Menus and scripted cutscenes keep their
+60 Hz pacing. Set `RECOMP_TS2_FREE_STEP=0` to keep gameplay at 60 Hz under
+those caps too. For builds without elapsed-time gameplay, use frame
+interpolation to show more than 60 frames per second at normal game speed.
 
 To keep the front end at 4:3 between bars while the levels are 16:9, add
 `ts2_menus = 43` to the settings file (see [Where things are
