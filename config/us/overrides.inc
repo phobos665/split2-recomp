@@ -67,6 +67,13 @@ static int g_ts2_us_free_step;
 static float g_ts2_us_frame_step;
 static float g_ts2_us_previous_frame_step;
 
+/* The MapMaker uses a gameplay camera but is not a 60 Hz simulation. Its
+ * editor timing remains tied to protected frame presentation. */
+static int ts2_us_mapmaker_mode(void)
+{
+    return g_ts2_us_gameplay_frame && TS2_MEM32(0x004AD6A4u) == 1u;
+}
+
 extern void sub_00168BF0_gen(void);
 void sub_00168BF0(void)
 {
@@ -80,7 +87,7 @@ void sub_00168BF0(void)
     g_ts2_us_free_step = 0;
     if (!g_ts2_us_gameplay_frame || !ts2_us_cap_above_vblank() ||
         !ts2_us_free_step_enabled() || TS2_MEM32(TS2_US_CLOCK_HELD) ||
-        TS2_MEM32(TS2_US_SEQUENCE)) {
+        TS2_MEM32(TS2_US_SEQUENCE) || ts2_us_mapmaker_mode()) {
         last = remainder = 0;
         g_ts2_us_frame_step = 0.0f;
         sub_00168BF0_gen();
@@ -430,7 +437,8 @@ void sub_001CC100(void)
     g_ts2_us_gameplay_frame = g_ts2_frame_camera && !g_ts2_frame_front_end;
     hold = ts2_us_cap_above_vblank() &&
            (!g_ts2_us_gameplay_frame || !ts2_us_free_step_enabled() ||
-            sequence || TS2_MEM32(TS2_US_CLOCK_HELD));
+            sequence || TS2_MEM32(TS2_US_CLOCK_HELD) ||
+            ts2_us_mapmaker_mode());
     if (sequence != g_ts2_us_last_seq) {
         fprintf(stderr, "[TS2-SEQ] sequence %u -> %u (gameplay %d, front end %d, "
                         "cap %s)\n",
